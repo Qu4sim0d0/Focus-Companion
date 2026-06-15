@@ -28,8 +28,11 @@ type TranslationKey =
   | "endSession"
   | "sessionStarted"
   | "sessionPaused"
+  | "sessionPausedMonitoringLost"
   | "sessionResumed"
   | "sessionEnded"
+  | "sessionPreparing"
+  | "sessionPreparingShort"
   | "setupTitle"
   | "setupBody"
   | "setupAwTitle"
@@ -61,6 +64,9 @@ type TranslationKey =
   | "languageHelp"
   | "toolsTitle"
   | "toolsHelp"
+  | "monitoringToolsTitle"
+  | "monitoringToolsHelp"
+  | "reconnectAw"
   | "introTitle"
   | "introBody"
   | "introFeatureCamera"
@@ -135,7 +141,8 @@ type TranslationKey =
   | "away"
   | "camera"
   | "attentionNow"
-  | "openedToday"
+  | "todaySessionTotal"
+  | "todaySessionTotalHelp"
   | "idle"
   | "cameraRunning"
   | "detecting"
@@ -245,7 +252,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     monitoringActive: "专注监测正在运行",
     monitoringActiveHelp: "摄像头只在本机处理，注意力变化会实时写入时间线。",
     readyToFocus: "准备开始一次专注",
-    readyToFocusHelp: "开始会话后只统计你主动记录的时间；ActivityWatch 和摄像头可按需开启。",
+    readyToFocusHelp: "点击开始后会自动连接 ActivityWatch 并开启摄像头；两项都准备好后才开始计时。",
     sessionRunningTitle: "专注会话进行中",
     sessionRunningHelp: "当前时段正在计入日报，分心提醒也只会在会话进行时触发。",
     sessionPausedTitle: "专注会话已暂停",
@@ -261,10 +268,13 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     endSession: "结束会话",
     sessionStarted: "专注会话已开始。",
     sessionPaused: "专注会话已暂停，暂停时间不会计入统计。",
+    sessionPausedMonitoringLost: "监测连接已中断，会话已自动暂停。恢复连接后可继续。",
     sessionResumed: "专注会话已继续。",
     sessionEnded: "专注会话已结束。",
-    setupTitle: "三步完成首次设置",
-    setupBody: "先读取活动数据，再按需开启摄像头。所有数据都留在这台电脑上。",
+    sessionPreparing: "正在连接 ActivityWatch 并启动摄像头...",
+    sessionPreparingShort: "正在准备监测...",
+    setupTitle: "开始一次专注会话",
+    setupBody: "点击上方“开始专注会话”，应用会自动准备 ActivityWatch 和摄像头，成功后再开始计时。手动连接工具在设置菜单中。",
     setupAwTitle: "连接 ActivityWatch",
     setupAwBody: "读取今天的前台软件和窗口记录，建立专注时间线。",
     setupCameraTitle: "开启本地注意力指标",
@@ -294,6 +304,9 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     languageHelp: "切换界面显示语言",
     toolsTitle: "模拟与导出",
     toolsHelp: "测试数据和复盘报告不影响实时监视。",
+    monitoringToolsTitle: "监测连接",
+    monitoringToolsHelp: "会话开始时会自动准备；这里用于手动重连和排查。计时期间摄像头由会话保护。",
+    reconnectAw: "重新连接 ActivityWatch",
     introTitle: "功能说明",
     introBody:
       "它会把摄像头推断出的注意力指标和 ActivityWatch 的前台应用、窗口标题合并，自动生成日/周复盘图表，帮助你看清自己在一段时间内是否真的专注。",
@@ -370,7 +383,8 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     away: "离开",
     camera: "摄像头",
     attentionNow: "当前注意力",
-    openedToday: "今日打开 FC",
+    todaySessionTotal: "今日专注会话",
+    todaySessionTotalHelp: "今日所有会话累计时长",
     idle: "未启动",
     cameraRunning: "运行中",
     detecting: "检测中",
@@ -431,7 +445,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     settingsImportFailed: "无法导入设置备份。",
     defaultsRestored: "已恢复默认设置。",
     clearLocalConfirmTitle: "确认清理本地聚合数据？",
-    clearLocalConfirmBody: "将清除今日/每周聚合缓存、软件列表和“今日打开 FC”计时。不会删除 ActivityWatch 原始记录，也不会删除已导出的报告。",
+    clearLocalConfirmBody: "将清除今日/每周聚合缓存、软件列表和今日专注会话计时。不会删除 ActivityWatch 原始记录，也不会删除已导出的报告。",
     confirmClear: "确认清理",
     cancel: "取消",
     localDataCleared: "本地聚合数据已清理；ActivityWatch 原始记录未受影响。",
@@ -479,7 +493,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     monitoringActive: "Focus monitoring is active",
     monitoringActiveHelp: "Camera processing stays local and attention changes update the timeline live.",
     readyToFocus: "Ready for a focus session",
-    readyToFocusHelp: "Start a session to count only the time you intentionally record. ActivityWatch and camera signals remain optional.",
+    readyToFocusHelp: "Starting a session connects ActivityWatch and starts the camera automatically. Timing begins only when both are ready.",
     sessionRunningTitle: "Focus session in progress",
     sessionRunningHelp: "This period is included in reports. Distraction nudges only run during an active session.",
     sessionPausedTitle: "Focus session paused",
@@ -495,10 +509,13 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     endSession: "End session",
     sessionStarted: "Focus session started.",
     sessionPaused: "Focus session paused. Paused time will not be counted.",
+    sessionPausedMonitoringLost: "Monitoring was interrupted, so the session paused automatically. Reconnect before resuming.",
     sessionResumed: "Focus session resumed.",
     sessionEnded: "Focus session ended.",
-    setupTitle: "Finish setup in three steps",
-    setupBody: "Load activity data first, then enable the camera only if useful. Everything stays on this computer.",
+    sessionPreparing: "Connecting ActivityWatch and starting the camera...",
+    sessionPreparingShort: "Preparing monitoring...",
+    setupTitle: "Start a focus session",
+    setupBody: "Use Start focus session above. The app prepares ActivityWatch and the camera automatically, then starts timing. Manual connection tools remain in Settings.",
     setupAwTitle: "Connect ActivityWatch",
     setupAwBody: "Load today's foreground apps and windows to build the focus timeline.",
     setupCameraTitle: "Enable local attention metrics",
@@ -528,6 +545,9 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     languageHelp: "Change the interface language",
     toolsTitle: "Simulation and exports",
     toolsHelp: "Test data and review reports do not affect live monitoring.",
+    monitoringToolsTitle: "Monitoring connections",
+    monitoringToolsHelp: "Sessions prepare these automatically. Use these controls for reconnects and troubleshooting; the camera is protected while timing.",
+    reconnectAw: "Reconnect ActivityWatch",
     introTitle: "What it does",
     introBody:
       "It combines webcam-derived attention metrics with ActivityWatch foreground app and window-title data, then generates daily and weekly charts so you can review whether a work period was actually focused.",
@@ -604,7 +624,8 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     away: "Away",
     camera: "Camera",
     attentionNow: "Attention now",
-    openedToday: "FC open today",
+    todaySessionTotal: "Today's focus sessions",
+    todaySessionTotalHelp: "Total time across today's sessions",
     idle: "Idle",
     cameraRunning: "Running",
     detecting: "Detecting",
@@ -665,7 +686,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     settingsImportFailed: "Could not import the settings backup.",
     defaultsRestored: "Default settings restored.",
     clearLocalConfirmTitle: "Clear local aggregate data?",
-    clearLocalConfirmBody: "This clears daily/weekly cache, the app list, and the FC-open timer. Raw ActivityWatch records and exported reports are not deleted.",
+    clearLocalConfirmBody: "This clears daily/weekly cache, the app list, and today's focus-session timing. Raw ActivityWatch records and exported reports are not deleted.",
     confirmClear: "Clear now",
     cancel: "Cancel",
     localDataCleared: "Local aggregate data cleared. Raw ActivityWatch records were not affected.",

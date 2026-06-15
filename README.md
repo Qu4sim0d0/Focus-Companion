@@ -67,7 +67,7 @@ After loading ActivityWatch, the UI lists today's foreground apps by duration an
 
 Daily totals only include observed time. If Focus Companion has written session events, totals are limited to those session minutes. If there are no session events yet, the app falls back to minutes covered by ActivityWatch/camera events. It does not count the rest of the unopened day as away.
 
-Focus sessions are user-controlled. Connecting ActivityWatch or starting the camera no longer starts a session implicitly. The local session clock survives a reload, pauses after a stale/sleep-sized gap, and resets at the next local calendar day. Distraction nudges only run while a focus session is active.
+Focus sessions are user-controlled. Starting or resuming a session first connects ActivityWatch and starts the local camera pipeline; timing begins only after both are ready. Ending a session stops the camera automatically. The local clock preserves the most recent session and today's accumulated session time, survives a reload, pauses after a stale/sleep-sized gap, and resets at the next local calendar day. Distraction nudges only run while a focus session is active.
 
 The interactive attention timeline loads the chart engine on demand. The daily breakdown and weekly trend use lightweight native SVG charts, keeping them crisp on Retina displays and exportable without loading additional chart modules.
 
@@ -77,7 +77,7 @@ Window-title rules take priority over app rules. For example, Safari can be an a
 
 ## ActivityWatch Startup And Permissions
 
-In the packaged Tauri desktop app, clicking `读取 ActivityWatch` tries to open ActivityWatch before polling `http://localhost:5600/api/0/info`.
+In the packaged Tauri desktop app, starting a focus session or using the manual reconnect control tries to open ActivityWatch before polling `http://localhost:5600/api/0/info`.
 
 In browser development mode, the app cannot launch local macOS apps directly; start ActivityWatch manually or build/run the Tauri app.
 
