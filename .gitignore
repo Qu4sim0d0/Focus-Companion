@@ -1,0 +1,12 @@
+node_modules/
+dist/
+output/
+
+public/models/face_landmarker.task
+public/wasm/
+
+src-tauri/target/
+src-tauri/gen/
+
+.DS_Store
+*.log
