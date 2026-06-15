@@ -21,9 +21,18 @@ npm run setup
 
 - macOS 13 或更高版本
 - 检查 Node.js、npm、Rust/Cargo 和 Xcode Command Line Tools
+- 自动加载 `~/.cargo/env` 并补充 `~/.cargo/bin` 到当前会话路径
 - 安装项目依赖
 
 如果缺少系统级前置条件，脚本会直接提示下一步怎么补齐。
+
+如果你是在新开的终端里直接跑 `npm run tauri:dev`，但 `cargo` 仍然找不到，先执行：
+
+```bash
+source "$HOME/.cargo/env"
+```
+
+或者重新打开一个已加载 Rust 环境的终端。
 
 ### 2. 安装并启动 ActivityWatch
 

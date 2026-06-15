@@ -7,6 +7,22 @@ log() {
   printf '%s\n' "$1"
 }
 
+ensure_cargo_path() {
+  if command -v cargo >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ -f "$HOME/.cargo/env" ]; then
+    # Load Rustup's shell setup so cargo is available in non-login shells.
+    # shellcheck disable=SC1090
+    source "$HOME/.cargo/env"
+  fi
+
+  if [ -d "$HOME/.cargo/bin" ]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+  fi
+}
+
 require_cmd() {
   local cmd="$1"
   local install_hint="$2"
@@ -20,11 +36,9 @@ require_cmd() {
 log "检查运行环境..."
 require_cmd node "请先安装 Node.js 20.19+ 或 22.12+。"
 require_cmd npm "Node.js 安装后应自带 npm。"
+ensure_cargo_path
 require_cmd cargo "请先安装 Rust 与 Cargo。"
 require_cmd xcode-select "请先安装 Xcode Command Line Tools。"
-
-NODE_VERSION="$(node --version | sed 's/^v//')"
-log "Node.js 版本：$NODE_VERSION"
 
 if ! xcode-select -p >/dev/null 2>&1; then
   log "Xcode Command Line Tools 未安装。"
@@ -32,14 +46,13 @@ if ! xcode-select -p >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f "$HOME/.cargo/env" ]; then
-  log "未找到 Rust 环境文件：$HOME/.cargo/env"
-  log "请先安装 Rust：curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-  exit 1
-fi
+NODE_VERSION="$(node --version | sed 's/^v//')"
+log "Node.js 版本：$NODE_VERSION"
+log "Cargo 位置：$(command -v cargo)"
 
 log "安装项目依赖..."
 cd "$ROOT_DIR"
 npm install
 
-log "完成。接下来可以运行：npm run tauri:dev"
+log "完成。若 tauri dev 仍提示 cargo 找不到，请执行：source \"$HOME/.cargo/env\""
+log "接下来可以运行：npm run tauri:dev"
