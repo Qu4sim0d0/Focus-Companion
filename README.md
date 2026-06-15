@@ -9,7 +9,23 @@ Focus Companion 是一个面向 macOS 的本地专注监测应用。它把以下
 
 ## 第一次运行
 
-### 1. 安装并启动 ActivityWatch
+### 1. 一键完成项目安装
+
+先在仓库根目录运行：
+
+```bash
+npm run setup
+```
+
+这个脚本会：
+
+- macOS 13 或更高版本
+- 检查 Node.js、npm、Rust/Cargo 和 Xcode Command Line Tools
+- 安装项目依赖
+
+如果缺少系统级前置条件，脚本会直接提示下一步怎么补齐。
+
+### 2. 安装并启动 ActivityWatch
 
 1. 打开 [ActivityWatch 下载页](https://activitywatch.net/downloads/)。
 2. 下载 macOS `.dmg`，把 ActivityWatch 拖入“应用程序”。
@@ -18,45 +34,6 @@ Focus Companion 是一个面向 macOS 的本地专注监测应用。它把以下
 5. 确认 ActivityWatch 页面能够显示数据，并且 `aw-watcher-window` 正在运行。
 
 ActivityWatch 必须保持运行，否则 Focus Companion 无法取得前台软件和窗口标题。
-
-### 2. 安装开发环境
-
-需要：
-
-- macOS 13 或更高版本
-- Node.js `20.19+` 或 `22.12+`
-- Rust 与 Cargo
-- Xcode Command Line Tools
-
-检查 Node.js：
-
-```bash
-node --version
-npm --version
-```
-
-安装 Xcode Command Line Tools：
-
-```bash
-xcode-select --install
-```
-
-安装 Rust 与 Cargo：
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-cargo --version
-```
-
-### 3. 安装项目依赖
-
-在终端进入项目目录：
-
-```bash
-cd /Users/meg/Documents/project/focus-companion
-npm install
-```
 
 ## 推荐启动方式：桌面版
 
