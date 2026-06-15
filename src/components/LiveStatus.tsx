@@ -151,6 +151,7 @@ export const LiveStatus = memo(function LiveStatus({
           </b>
         </span>
         <span>{formatIdleDuration(input.idleSeconds, locale)}</span>
+        <span>{t(locale, input.scope === "system" ? "inputScopeSystem" : "inputScopeWindow")}</span>
       </div>
     </section>
   );
@@ -173,10 +174,28 @@ export const InputActivityMetric = memo(function InputActivityMetric({
       </strong>
       <span>
         {input.available
-          ? formatIdleDuration(input.idleSeconds, locale)
+          ? `${formatIdleDuration(input.idleSeconds, locale)} · ${
+              t(locale, input.scope === "system" ? "inputScopeSystem" : "inputScopeWindow")
+            }`
           : t(locale, "inputUnavailableHelp")}
       </span>
     </>
+  );
+});
+
+export const InputMonitoringStatus = memo(function InputMonitoringStatus({
+  locale,
+}: {
+  locale: Locale;
+}) {
+  const input = useInputActivity();
+  return (
+    <span data-ready={input.available && input.scope === "system"}>
+      {t(locale, "inputMonitoring")} ·{" "}
+      {input.available
+        ? t(locale, input.scope === "system" ? "inputScopeSystem" : "inputScopeWindow")
+        : t(locale, "inputUnavailable")}
+    </span>
   );
 });
 

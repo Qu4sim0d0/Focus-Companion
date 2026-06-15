@@ -1089,6 +1089,12 @@ h2 {
   font-size: 0.8rem;
 }
 
+.aw-window-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .intro-panel ul {
   margin-bottom: 18px;
   padding-left: 20px;

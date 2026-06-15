@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { existsSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { request } from "node:http";
 
 function openMacTarget(args: string[]): Promise<boolean> {
@@ -9,6 +9,29 @@ function openMacTarget(args: string[]): Promise<boolean> {
     const child = spawn("open", args, { stdio: "ignore" });
     child.on("close", (code) => resolve(code === 0));
     child.on("error", () => resolve(false));
+  });
+}
+
+function getMacSystemIdleSeconds(): Promise<number | null> {
+  return new Promise((resolve) => {
+    execFile(
+      "/usr/sbin/ioreg",
+      ["-c", "IOHIDSystem"],
+      { timeout: 1_500, maxBuffer: 1024 * 1024 },
+      (error, stdout) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        const match = stdout.match(/"HIDIdleTime"\s*=\s*(\d+)/);
+        if (!match) {
+          resolve(null);
+          return;
+        }
+        const nanoseconds = Number(match[1]);
+        resolve(Number.isFinite(nanoseconds) ? nanoseconds / 1_000_000_000 : null);
+      },
+    );
   });
 }
 
@@ -85,6 +108,14 @@ export default defineConfig({
             const ok = await openMacTarget(["http://localhost:5600"]);
             res.setHeader("content-type", "application/json");
             res.end(JSON.stringify({ status: ok ? "opened" : "failed" }));
+            return;
+          }
+
+          if (req.url === "/__focus_companion/system_idle") {
+            const seconds = await getMacSystemIdleSeconds();
+            res.statusCode = seconds === null ? 503 : 200;
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ seconds }));
             return;
           }
 

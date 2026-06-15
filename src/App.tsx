@@ -22,6 +22,14 @@ import {
 import { getInputActivitySnapshot } from "./core/inputActivity";
 import { type NudgeTracker } from "./core/nudges";
 import {
+  observedAppMode,
+  observedWindowMode,
+  summarizeObservedApps,
+  summarizeObservedWindows,
+  type ObservedApp,
+  type ObservedWindow,
+} from "./core/observedActivity";
+import {
   advanceFocusSessionClock,
   endFocusSessionClock,
   loadFocusSessionClock,
@@ -49,6 +57,7 @@ import { DailyBreakdownChart, WeeklyTrendChart } from "./components/SummaryChart
 import { Layout, MainContent, Sidebar } from "./components/AppLayout";
 import {
   InputActivityMetric,
+  InputMonitoringStatus,
   LiveStatus,
   type FocusNudge,
 } from "./components/LiveStatus";
@@ -71,11 +80,6 @@ interface LoadedSummaries {
   dailySummary: DailySummary;
   weeklySummary: WeeklySummary;
   todayInputs: FocusInputEvents;
-}
-
-interface ObservedApp {
-  name: string;
-  seconds: number;
 }
 
 interface ErrorNotice {
@@ -119,8 +123,11 @@ export function App() {
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(storedState.weeklySummary);
   const [todayInputs, setTodayInputs] = useState<FocusInputEvents | null>(null);
   const [observedApps, setObservedApps] = useState<ObservedApp[]>([]);
+  const [observedWindows, setObservedWindows] = useState<ObservedWindow[]>([]);
   const [appSearch, setAppSearch] = useState("");
   const [appFilter, setAppFilter] = useState<"all" | "focus" | "distract">("all");
+  const [windowSearch, setWindowSearch] = useState("");
+  const [windowFilter, setWindowFilter] = useState<"all" | "focus" | "distract">("all");
   const [awBusy, setAwBusy] = useState(false);
   const [sessionStarting, setSessionStarting] = useState(false);
   const [errorNotice, setErrorNotice] = useState<ErrorNotice | null>(null);
@@ -246,6 +253,7 @@ export function App() {
     setWeeklySummary(weeklySummary);
     setTodayInputs(todayInputs);
     setObservedApps(summarizeObservedApps(todayInputs.windowEvents));
+    setObservedWindows(summarizeObservedWindows(todayInputs.windowEvents));
   }, []);
 
   const applyInputEvents = useCallback((
@@ -280,8 +288,9 @@ export function App() {
       setStatus(t(locale, "connectingAw"));
       const windowEvents = await aw.getTodayWindowEvents();
       setObservedApps(summarizeObservedApps(windowEvents));
+      setObservedWindows(summarizeObservedWindows(windowEvents));
       setConnected(true);
-      setStatus(t(locale, "loadedAwApps"));
+      setStatus(t(locale, "loadedAwActivity"));
     } catch (error) {
       setConnected(false);
       const message = error instanceof Error ? `${t(locale, "awFailed")} ${error.message}` : t(locale, "awFailed");
@@ -444,6 +453,41 @@ export function App() {
       setWeeklySummary(null);
     }
     setStatus(t(locale, "appRuleUpdated"));
+  }, [
+    applyInputEvents,
+    dailySummary,
+    locale,
+    settings,
+    todayInputs,
+    weeklySummary,
+  ]);
+
+  const setObservedWindowMode = useCallback((
+    item: ObservedWindow,
+    mode: "focus" | "distract",
+  ) => {
+    const sameTitle = (value: string) =>
+      value.toLocaleLowerCase() === item.title.toLocaleLowerCase();
+    const nextAllowed = settings.allowedWindowTitles.filter((value) => !sameTitle(value));
+    const nextDistracting = settings.distractingWindowTitles.filter((value) => !sameTitle(value));
+    if (mode === "focus") nextAllowed.push(item.title);
+    if (mode === "distract") nextDistracting.push(item.title);
+    const nextSettings: FocusSettings = {
+      ...settings,
+      allowedWindowTitles: nextAllowed,
+      distractingWindowTitles: nextDistracting,
+      rules: settings.rules.filter((rule) => !(rule.matchTitle && sameTitle(rule.pattern))),
+    };
+    setSettings(nextSettings);
+    setAllowedWindowTitlesText(nextAllowed.join("\n"));
+    setDistractingWindowTitlesText(nextDistracting.join("\n"));
+    if (todayInputs) {
+      applyInputEvents(todayInputs, nextSettings);
+    } else if (dailySummary || weeklySummary) {
+      setDailySummary(null);
+      setWeeklySummary(null);
+    }
+    setStatus(t(locale, "windowRuleUpdated"));
   }, [
     applyInputEvents,
     dailySummary,
@@ -733,6 +777,7 @@ export function App() {
     setDailySummary(null);
     setWeeklySummary(null);
     setObservedApps([]);
+    setObservedWindows([]);
     setFocusNudge(null);
     nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
     const nextFocusSession = resetFocusSessionClock(Date.now());
@@ -782,6 +827,7 @@ export function App() {
     }));
 
   const deferredAppSearch = useDeferredValue(appSearch);
+  const deferredWindowSearch = useDeferredValue(windowSearch);
   const filteredApps = useMemo(() => {
     const query = deferredAppSearch.trim().toLocaleLowerCase();
     return observedApps.filter((app) => {
@@ -790,6 +836,15 @@ export function App() {
         (!query || app.name.toLocaleLowerCase().includes(query));
     });
   }, [appFilter, deferredAppSearch, observedApps, settings]);
+  const filteredWindows = useMemo(() => {
+    const query = deferredWindowSearch.trim().toLocaleLowerCase();
+    return observedWindows.filter((item) => {
+      const mode = observedWindowMode(item, settings);
+      const searchable = `${item.app} ${item.title}`.toLocaleLowerCase();
+      return (windowFilter === "all" || mode === windowFilter) &&
+        (!query || searchable.includes(query));
+    });
+  }, [deferredWindowSearch, observedWindows, settings, windowFilter]);
 
   return (
     <Layout
@@ -971,7 +1026,7 @@ export function App() {
               </div>
               <div className="monitoring-status-row">
                 <span data-ready={connected}>{t(locale, connected ? "connected" : "disconnected")}</span>
-                <span data-ready>{t(locale, "inputMonitoring")} · {t(locale, "active")}</span>
+                <InputMonitoringStatus locale={locale} />
               </div>
               <div className="settings-tool-actions">
                 <button onClick={() => void refreshActivityWatch()} disabled={awBusy}>
@@ -1098,6 +1153,7 @@ export function App() {
             <span className="disclosure-chevron" aria-hidden="true">⌄</span>
           </summary>
           <div className="disclosure-content aw-apps-panel">
+            <p className="rules-help">{t(locale, "awAppsHelp")}</p>
             <div className="aw-app-toolbar">
               <label className="app-search">
                 <span className="sr-only">{t(locale, "searchApps")}</span>
@@ -1148,6 +1204,69 @@ export function App() {
                 </div>
               </>
             ) : <p className="aw-apps-empty">{t(locale, "awAppsEmpty")}</p>}
+          </div>
+            </details>
+
+            <details className="panel disclosure-panel">
+          <summary>
+            <div>
+              <span className="summary-icon" aria-hidden="true">▤</span>
+              <div><strong>{t(locale, "awWindowsTitle")}</strong><small>{t(locale, "awWindowsSummary")}</small></div>
+            </div>
+            <span className="disclosure-chevron" aria-hidden="true">⌄</span>
+          </summary>
+          <div className="disclosure-content aw-apps-panel">
+            <p className="rules-help">{t(locale, "awWindowsHelp")}</p>
+            <div className="aw-app-toolbar">
+              <label className="app-search">
+                <span className="sr-only">{t(locale, "searchWindows")}</span>
+                <input
+                  type="search"
+                  placeholder={t(locale, "searchWindows")}
+                  value={windowSearch}
+                  onChange={(event) => setWindowSearch(event.target.value)}
+                />
+              </label>
+              <div className="filter-pills" role="group" aria-label={t(locale, "filterWindows")}>
+                {(["all", "focus", "distract"] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    data-active={windowFilter === filter}
+                    onClick={() => setWindowFilter(filter)}
+                  >
+                    {t(locale, `appFilter${filter[0].toUpperCase()}${filter.slice(1)}` as
+                      | "appFilterAll"
+                      | "appFilterFocus"
+                      | "appFilterDistract")}
+                  </button>
+                ))}
+              </div>
+              <button onClick={refreshObservedApps} disabled={awBusy}>
+                {awBusy ? t(locale, "refreshingAwApps") : t(locale, "refreshAwWindows")}
+              </button>
+            </div>
+            {observedWindows.length > 0 ? (
+              <>
+                <p className="app-count">{t(locale, "showingWindows")} {filteredWindows.length}/{observedWindows.length}</p>
+                <div className="aw-app-list">
+                  {filteredWindows.map((item) => {
+                    const mode = observedWindowMode(item, settings);
+                    return (
+                      <div className="aw-app-row aw-window-row" key={`${item.app}:${item.title}`}>
+                        <div>
+                          <strong title={item.title}>{item.title}</strong>
+                          <span>{item.app} · {formatAppDuration(item.seconds, locale)}</span>
+                        </div>
+                        <div className="app-mode-control">
+                          <button data-active={mode === "focus"} onClick={() => setObservedWindowMode(item, "focus")}>{t(locale, "appModeFocus")}</button>
+                          <button data-active={mode === "distract"} onClick={() => setObservedWindowMode(item, "distract")}>{t(locale, "appModeDistract")}</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : <p className="aw-apps-empty">{t(locale, "awWindowsEmpty")}</p>}
           </div>
             </details>
 
@@ -1301,33 +1420,6 @@ function parseRuleList(value: string): string[] {
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function summarizeObservedApps(
-  events: ActivityWatchEvent<WindowEventData>[],
-): ObservedApp[] {
-  const durations = new Map<string, number>();
-  for (const event of events) {
-    const name = event.data.app?.trim();
-    if (!name) continue;
-    durations.set(name, (durations.get(name) ?? 0) + Math.max(0, event.duration));
-  }
-  return Array.from(durations, ([name, seconds]) => ({ name, seconds }))
-    .sort((left, right) => right.seconds - left.seconds || left.name.localeCompare(right.name));
-}
-
-function observedAppMode(
-  app: string,
-  settings: FocusSettings,
-): "focus" | "distract" {
-  const normalized = app.toLocaleLowerCase();
-  if (settings.distractingApps.some((value) => value.toLocaleLowerCase() === normalized)) {
-    return "distract";
-  }
-  if (settings.allowedApps.some((value) => value.toLocaleLowerCase() === normalized)) {
-    return "focus";
-  }
-  return "focus";
 }
 
 function formatAppDuration(seconds: number, locale: Locale): string {

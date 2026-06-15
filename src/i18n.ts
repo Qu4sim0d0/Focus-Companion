@@ -109,6 +109,15 @@ type TranslationKey =
   | "appModeFocus"
   | "appModeDistract"
   | "appRuleUpdated"
+  | "awWindowsTitle"
+  | "awWindowsSummary"
+  | "awWindowsHelp"
+  | "refreshAwWindows"
+  | "awWindowsEmpty"
+  | "searchWindows"
+  | "filterWindows"
+  | "showingWindows"
+  | "windowRuleUpdated"
   | "loadAw"
   | "openAw"
   | "openPermissions"
@@ -127,6 +136,8 @@ type TranslationKey =
   | "inputIdle"
   | "inputUnavailable"
   | "inputUnavailableHelp"
+  | "inputScopeSystem"
+  | "inputScopeWindow"
   | "active"
   | "todaySessionTotal"
   | "todaySessionTotalHelp"
@@ -163,7 +174,7 @@ type TranslationKey =
   | "awBrowserMode"
   | "connectingAw"
   | "loadedAw"
-  | "loadedAwApps"
+  | "loadedAwActivity"
   | "openedAw"
   | "awFailed"
   | "permissionsOpened"
@@ -289,6 +300,15 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     appModeFocus: "允许",
     appModeDistract: "分心",
     appRuleUpdated: "软件分类已更新并重新计算。",
+    awWindowsTitle: "ActivityWatch 窗口列表",
+    awWindowsSummary: "独立查看并分类今日出现过的窗口",
+    awWindowsHelp: "窗口标题与软件列表分开显示。窗口规则优先于软件规则，可用于区分同一浏览器中的工作页面和分心页面。",
+    refreshAwWindows: "刷新 AW 窗口",
+    awWindowsEmpty: "尚未读取到窗口。请确认 ActivityWatch 的 aw-watcher-window 正在运行，然后点击刷新。",
+    searchWindows: "搜索窗口标题或所属软件",
+    filterWindows: "筛选窗口",
+    showingWindows: "显示窗口",
+    windowRuleUpdated: "窗口分类已更新并重新计算。",
     loadAw: "读取 ActivityWatch",
     openAw: "打开 AW 窗口",
     openPermissions: "打开辅助功能权限",
@@ -307,6 +327,8 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     inputIdle: "无输入",
     inputUnavailable: "不可用",
     inputUnavailableHelp: "未读取到系统输入状态",
+    inputScopeSystem: "系统级输入",
+    inputScopeWindow: "仅当前页面输入",
     active: "活跃",
     todaySessionTotal: "今日专注会话",
     todaySessionTotalHelp: "今日所有会话累计时长",
@@ -343,10 +365,10 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     awBrowserMode: "当前是浏览器开发模式，无法直接启动本机 ActivityWatch；桌面版会自动尝试打开。",
     connectingAw: "正在连接 ActivityWatch...",
     loadedAw: "已读取并保存本地聚合数据。",
-    loadedAwApps: "已刷新 ActivityWatch 软件列表。",
+    loadedAwActivity: "已刷新 ActivityWatch 软件和窗口列表。",
     openedAw: "已打开 ActivityWatch 窗口。",
     awFailed: "ActivityWatch 连接失败。",
-    permissionsOpened: "已打开系统权限设置。macOS 需要你手动勾选 ActivityWatch/本应用。",
+    permissionsOpened: "已打开系统权限设置。若窗口标题缺失，请检查 ActivityWatch 的辅助功能权限。",
     loadingAw: "正在读取...",
     refreshingAwApps: "正在刷新...",
     retry: "重试",
@@ -468,6 +490,15 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     appModeFocus: "Allowed",
     appModeDistract: "Distracting",
     appRuleUpdated: "App classification updated and recalculated.",
+    awWindowsTitle: "ActivityWatch window list",
+    awWindowsSummary: "Review and classify today's windows separately",
+    awWindowsHelp: "Window titles are separate from the app list. Window rules override app rules, so pages in the same browser can be classified differently.",
+    refreshAwWindows: "Refresh AW windows",
+    awWindowsEmpty: "No windows loaded yet. Make sure ActivityWatch's aw-watcher-window is running, then refresh.",
+    searchWindows: "Search window titles or apps",
+    filterWindows: "Filter windows",
+    showingWindows: "Showing windows",
+    windowRuleUpdated: "Window classification updated and recalculated.",
     loadAw: "Load ActivityWatch",
     openAw: "Open AW window",
     openPermissions: "Open accessibility permissions",
@@ -486,6 +517,8 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     inputIdle: "No input",
     inputUnavailable: "Unavailable",
     inputUnavailableHelp: "System input activity could not be read",
+    inputScopeSystem: "System-wide input",
+    inputScopeWindow: "Current-page input only",
     active: "Active",
     todaySessionTotal: "Today's focus sessions",
     todaySessionTotalHelp: "Total time across today's sessions",
@@ -522,10 +555,10 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     awBrowserMode: "Browser development mode cannot start the local ActivityWatch app; the desktop build will try automatically.",
     connectingAw: "Connecting to ActivityWatch...",
     loadedAw: "Loaded and saved local aggregate data.",
-    loadedAwApps: "ActivityWatch app list refreshed.",
+    loadedAwActivity: "ActivityWatch app and window lists refreshed.",
     openedAw: "Opened ActivityWatch window.",
     awFailed: "ActivityWatch connection failed.",
-    permissionsOpened: "Opened system permission settings. macOS still requires you to approve ActivityWatch/the app manually.",
+    permissionsOpened: "Opened system permission settings. If window titles are missing, check ActivityWatch accessibility access.",
     loadingAw: "Loading...",
     refreshingAwApps: "Refreshing...",
     retry: "Retry",

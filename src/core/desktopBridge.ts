@@ -41,11 +41,21 @@ export async function openAccessibilitySettings(): Promise<"opened" | "browser-m
 }
 
 export async function getSystemIdleSeconds(): Promise<number | null> {
-  if (!("__TAURI_INTERNALS__" in window)) return null;
+  if ("__TAURI_INTERNALS__" in window) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const seconds = await invoke<number>("get_system_idle_seconds");
+      return normalizeIdleSeconds(seconds);
+    } catch {
+      return null;
+    }
+  }
+
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const seconds = await invoke<number>("get_system_idle_seconds");
-    return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+    const response = await fetch("/__focus_companion/system_idle", { method: "POST" });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { seconds?: number | null };
+    return normalizeIdleSeconds(data.seconds);
   } catch {
     return null;
   }
@@ -83,4 +93,10 @@ async function callDevBridge(path: string): Promise<"started" | "opened" | "brow
   } catch {
     return "browser-mode";
   }
+}
+
+function normalizeIdleSeconds(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
 }
