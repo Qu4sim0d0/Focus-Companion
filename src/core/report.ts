@@ -22,10 +22,10 @@ export function buildDailyMarkdown(summary: DailySummary, chartAssets: ChartAsse
     lines.push(`![${asset.filename}](assets/${asset.filename})`, "");
   }
 
-  lines.push("## Timeline", "", "| Time | State | App | Title | Attention |", "| --- | --- | --- | --- | --- |");
+  lines.push("## Timeline", "", "| Time | State | App | Title | Activity |", "| --- | --- | --- | --- | --- |");
   for (const record of compressTimeline(summary.timeline)) {
     lines.push(
-      `| ${new Date(record.minuteStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} | ${record.state} | ${escapeCell(record.app)} | ${escapeCell(record.title)} | ${record.attentionScore?.toFixed(2) ?? "n/a"} |`,
+      `| ${new Date(record.minuteStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} | ${record.state} | ${escapeCell(record.app)} | ${escapeCell(record.title)} | ${record.activityScore.toFixed(2)} |`,
     );
   }
 

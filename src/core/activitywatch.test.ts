@@ -46,4 +46,20 @@ describe("ActivityWatch date helpers", () => {
       data: { running: false },
     }));
   });
+
+  it("writes input idle metrics without input contents", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ActivityWatchClient("http://activitywatch.test/api/0");
+
+    await client.heartbeatInputMetric("focus-input_local", {
+      idleSeconds: 60,
+      active: false,
+    });
+
+    const request = fetchMock.mock.calls[0];
+    expect(JSON.parse(request[1].body)).toEqual(expect.objectContaining({
+      data: { idleSeconds: 60, active: false },
+    }));
+  });
 });

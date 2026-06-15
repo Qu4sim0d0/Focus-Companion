@@ -1,7 +1,5 @@
 import type { EChartsOption } from "echarts";
 import type {
-  ActivityWatchEvent,
-  CameraMetric,
   DailySummary,
   FocusState,
   WeeklySummary,
@@ -15,10 +13,18 @@ const stateColors: Record<FocusState, string> = {
   away: "#6b7280",
 };
 
+const stateHeights: Record<FocusState, number> = {
+  focused: 100,
+  distracted: 60,
+  away: 20,
+};
+
+const timelineWindowMs = 3 * 60 * 60 * 1000;
+
 const chartLabels: Record<
   Locale,
   Record<
-    FocusState | "minutes" | "state" | "app" | "title" | "attention" | "noAttention" | "noData",
+    FocusState | "minutes" | "state" | "app" | "title" | "activity" | "noData",
     string
   >
 > = {
@@ -30,8 +36,7 @@ const chartLabels: Record<
     state: "状态",
     app: "应用",
     title: "窗口",
-    attention: "注意力",
-    noAttention: "无有效注意力数据",
+    activity: "输入状态",
     noData: "暂无有效记录",
   },
   en: {
@@ -42,8 +47,7 @@ const chartLabels: Record<
     state: "State",
     app: "App",
     title: "Title",
-    attention: "Attention",
-    noAttention: "No valid attention data",
+    activity: "Input state",
     noData: "No valid records yet",
   },
 };
@@ -52,53 +56,42 @@ export function dailyTimelineOption(
   summary: DailySummary,
   locale: Locale = "zh",
   now = new Date(),
-  cameraEvents: ActivityWatchEvent<CameraMetric>[] = [],
-  attentionThreshold = 0.65,
 ): EChartsOption {
   const records = compressTimeline(summary.timeline, 1);
   const text = chartLabels[locale];
   const dayStart = new Date(`${summary.date}T00:00:00.000`).getTime();
-  const dayEnd = Math.min(now.getTime(), dayStart + 24 * 60 * 60 * 1000);
-  const points = buildAttentionPoints(records, cameraEvents);
+  const timelineEnd = Math.min(now.getTime(), dayStart + 24 * 60 * 60 * 1000);
+  const timelineStart = Math.max(dayStart, timelineEnd - timelineWindowMs);
+  const visibleRecords = records.filter((record) => {
+    const timestamp = new Date(record.minuteStart).getTime();
+    return timestamp >= timelineStart && timestamp <= timelineEnd;
+  });
 
   return {
-    animation: true,
-    animationDuration: 500,
-    animationDurationUpdate: 950,
-    animationEasing: "cubicOut",
-    animationEasingUpdate: "linear",
-    grid: { left: 16, right: 58, top: 22, bottom: 58, containLabel: true },
+    animation: false,
+    grid: { left: 16, right: 42, top: 22, bottom: 34, containLabel: true },
     tooltip: {
-      trigger: "axis",
+      trigger: "item",
       backgroundColor: "rgba(15, 23, 42, 0.94)",
       borderWidth: 0,
       textStyle: { color: "#f8fafc" },
-      axisPointer: {
-        type: "line",
-        lineStyle: { color: "#64748b", type: "dashed" },
-      },
       formatter: (params) => {
         const item = Array.isArray(params) ? params[0] : params;
-        const dataIndex = typeof item.dataIndex === "number" ? item.dataIndex : 0;
-        const point = points[dataIndex];
-        if (!point) return "";
+        const dataIndex = typeof item?.dataIndex === "number" ? item.dataIndex : 0;
+        const record = visibleRecords[dataIndex];
+        if (!record) return "";
         return [
-          formatLocalTime(point.timestamp),
-          `${text.state}: ${text[point.state]}`,
-          point.app ? `${text.app}: ${point.app}` : undefined,
-          point.title ? `${text.title}: ${point.title}` : undefined,
-          point.score === null
-            ? `${text.attention}: ${text.noAttention}`
-            : `${text.attention}: ${Math.round(point.score * 100)}%`,
-        ]
-          .filter(Boolean)
-          .join("<br/>");
+          formatLocalTime(new Date(record.minuteStart).getTime()),
+          `${text.state}: ${text[record.state]}`,
+          record.app ? `${text.app}: ${record.app}` : undefined,
+          record.title ? `${text.title}: ${record.title}` : undefined,
+        ].filter(Boolean).join("<br/>");
       },
     },
     xAxis: {
       type: "time",
-      min: dayStart,
-      max: dayEnd,
+      min: timelineStart,
+      max: timelineEnd,
       boundaryGap: [0, 0],
       axisLine: { lineStyle: { color: "#cbd5e1" } },
       axisTick: { show: false },
@@ -116,228 +109,119 @@ export function dailyTimelineOption(
       position: "right",
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: "#64748b", formatter: "{value}%" },
+      axisLabel: { show: false },
       splitLine: { lineStyle: { color: "#e2e8f0", type: "dashed" } },
     },
-    dataZoom: [
-      {
-        type: "inside",
-        xAxisIndex: 0,
-        filterMode: "none",
-        zoomOnMouseWheel: false,
-        moveOnMouseMove: true,
-        moveOnMouseWheel: true,
-        preventDefaultMouseMove: true,
-      },
-      {
-        type: "slider",
-        xAxisIndex: 0,
-        filterMode: "none",
-        height: 18,
-        bottom: 8,
-        brushSelect: false,
-        showDetail: false,
-        borderColor: "transparent",
-        backgroundColor: "#f1f5f9",
-        fillerColor: "rgba(37, 99, 235, 0.12)",
-        handleStyle: { color: "#93c5fd", borderColor: "#60a5fa" },
-        dataBackground: {
-          lineStyle: { color: "#94a3b8" },
-          areaStyle: { color: "rgba(148, 163, 184, 0.12)" },
-        },
-      },
-    ],
     series: [
       {
-        name: text.attention,
-        type: "line",
-        smooth: 0.28,
-        smoothMonotone: "x",
-        showSymbol: false,
-        symbol: "none",
-        connectNulls: false,
-        sampling: "lttb",
-        lineStyle: {
-          color: "#2563eb",
-          width: 2.5,
-          shadowBlur: 8,
-          shadowColor: "rgba(37, 99, 235, 0.24)",
-        },
-        itemStyle: { color: "#2563eb" },
-        areaStyle: {
-          color: {
-            type: "linear",
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: "rgba(37, 99, 235, 0.24)" },
-              { offset: 1, color: "rgba(37, 99, 235, 0.01)" },
-            ],
-          },
-        },
-        endLabel: {
-          show: points.filter((point) => point.score !== null).length > 1,
-          color: "#1d4ed8",
-          fontWeight: 700,
-          formatter: (params) => {
-            const value = Array.isArray(params.value) ? params.value[1] : undefined;
-            return typeof value === "number" ? `${Math.round(value)}%` : "";
-          },
-        },
-        markLine: {
-          silent: true,
-          symbol: "none",
-          label: { show: false },
-          lineStyle: { color: "#f59e0b", type: "dashed", opacity: 0.65 },
-          data: [{ yAxis: Math.round(attentionThreshold * 100) }],
-        },
-        data: points.map((point) => [
-          point.timestamp,
-          point.score === null ? null : Math.round(point.score * 100),
-        ]),
+        name: text.activity,
+        type: "bar",
+        barWidth: "70%",
+        itemStyle: { borderRadius: [2, 2, 0, 0] },
+        data: visibleRecords.map((record) => ({
+          value: [
+            new Date(record.minuteStart).getTime(),
+            stateHeights[record.state],
+          ],
+          itemStyle: { color: stateColors[record.state] },
+        })),
       },
     ],
   };
 }
 
-interface AttentionPoint {
-  timestamp: number;
-  score: number | null;
-  state: FocusState;
-  app: string;
-  title: string;
-}
+export function dailyBreakdownOption(
+  summary: DailySummary,
+  locale: Locale = "zh",
+): EChartsOption {
+  const text = chartLabels[locale];
+  const data = (["focused", "distracted", "away"] as FocusState[])
+    .map((state) => ({
+      name: text[state],
+      value: summary[`${state}Minutes` as keyof DailySummary] as number,
+      itemStyle: { color: stateColors[state] },
+    }))
+    .filter((item) => item.value > 0);
 
-function buildAttentionPoints(
-  records: ReturnType<typeof compressTimeline>,
-  cameraEvents: ActivityWatchEvent<CameraMetric>[],
-): AttentionPoint[] {
-  const recordsByMinute = new Map(
-    records.map((record) => [startOfMinuteMs(record.minuteStart), record]),
-  );
-  const validEvents = cameraEvents
-    .filter((event) => event.data.detector_ready !== false)
-    .slice()
-    .sort((left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime());
-
-  if (validEvents.length > 0) {
-    let smoothedScore: number | null = null;
-    return validEvents.map((event) => {
-      const timestamp = new Date(event.timestamp).getTime();
-      const record = recordsByMinute.get(startOfMinuteMs(timestamp));
-      if (event.data.present) {
-        smoothedScore =
-          smoothedScore === null
-            ? event.data.attention_score
-            : smoothedScore * 0.72 + event.data.attention_score * 0.28;
-      } else {
-        smoothedScore = null;
-      }
-      return {
-        timestamp,
-        score: smoothedScore,
-        state: record?.state ?? (event.data.present ? "distracted" : "away"),
-        app: record?.app ?? "",
-        title: record?.title ?? "",
-      };
-    });
+  if (data.length === 0) {
+    return emptyOption(text.noData);
   }
 
-  return records.map((record) => ({
-    timestamp: new Date(record.minuteStart).getTime(),
-    score: record.attentionScore,
-    state: record.state,
-    app: record.app,
-    title: record.title,
-  }));
+  return {
+    animation: false,
+    tooltip: { trigger: "item" },
+    legend: { bottom: 0, textStyle: { color: "#475569" } },
+    series: [{
+      type: "pie",
+      radius: ["52%", "72%"],
+      center: ["50%", "44%"],
+      label: { formatter: "{b}\n{c}m", color: "#334155" },
+      data,
+    }],
+  };
 }
 
-function startOfMinuteMs(value: string | number): number {
-  const date = new Date(value);
-  date.setSeconds(0, 0);
-  return date.getTime();
+export function weeklyTrendOption(
+  summary: WeeklySummary,
+  locale: Locale = "zh",
+): EChartsOption {
+  const text = chartLabels[locale];
+  if (summary.days.every((day) => day.totalMinutes === 0)) {
+    return emptyOption(text.noData);
+  }
+
+  return {
+    animation: false,
+    tooltip: { trigger: "axis" },
+    legend: {
+      bottom: 0,
+      data: [text.focused, text.distracted, text.away],
+      textStyle: { color: "#475569" },
+    },
+    grid: { left: 36, right: 16, top: 20, bottom: 44 },
+    xAxis: {
+      type: "category",
+      data: summary.days.map((day) => day.date.slice(5)),
+      axisLine: { lineStyle: { color: "#cbd5e1" } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: "value",
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: "#e2e8f0", type: "dashed" } },
+    },
+    series: (["focused", "distracted", "away"] as FocusState[]).map((state) => ({
+      name: text[state],
+      type: "line",
+      smooth: true,
+      symbolSize: 7,
+      lineStyle: { width: 2.5, color: stateColors[state] },
+      itemStyle: { color: stateColors[state] },
+      data: summary.days.map(
+        (day) => day[`${state}Minutes` as keyof DailySummary] as number,
+      ),
+    })),
+  };
 }
 
-function formatLocalTime(value: string | number): string {
-  return new Date(value).toLocaleTimeString([], {
+function emptyOption(message: string): EChartsOption {
+  return {
+    animation: false,
+    title: {
+      text: message,
+      left: "center",
+      top: "middle",
+      textStyle: { color: "#64748b", fontSize: 14, fontWeight: 500 },
+    },
+    series: [],
+  };
+}
+
+function formatLocalTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   });
-}
-
-export function dailyBreakdownOption(summary: DailySummary, locale: Locale = "zh"): EChartsOption {
-  const text = chartLabels[locale];
-  if (summary.totalMinutes === 0) return emptyChartOption(text.noData);
-
-  return {
-    tooltip: { trigger: "item" },
-    series: [
-      {
-        type: "pie",
-        radius: ["42%", "72%"],
-        data: [
-          { name: text.focused, value: summary.focusedMinutes, itemStyle: { color: stateColors.focused } },
-          { name: text.distracted, value: summary.distractedMinutes, itemStyle: { color: stateColors.distracted } },
-          { name: text.away, value: summary.awayMinutes, itemStyle: { color: stateColors.away } },
-        ],
-      },
-    ],
-  };
-}
-
-export function weeklyTrendOption(summary: WeeklySummary, locale: Locale = "zh"): EChartsOption {
-  const text = chartLabels[locale];
-  if (summary.days.every((day) => day.totalMinutes === 0)) {
-    return emptyChartOption(text.noData);
-  }
-
-  return {
-    grid: { left: 48, right: 24, top: 24, bottom: 42 },
-    tooltip: { trigger: "axis" },
-    legend: { bottom: 0 },
-    xAxis: { type: "category", data: summary.days.map((day) => day.date.slice(5)) },
-    yAxis: { type: "value", name: text.minutes },
-    series: [
-      {
-        name: text.focused,
-        type: "line",
-        smooth: true,
-        color: stateColors.focused,
-        data: summary.days.map((day) => day.focusedMinutes),
-      },
-      {
-        name: text.distracted,
-        type: "line",
-        smooth: true,
-        color: stateColors.distracted,
-        data: summary.days.map((day) => day.distractedMinutes),
-      },
-      {
-        name: text.away,
-        type: "line",
-        smooth: true,
-        color: stateColors.away,
-        data: summary.days.map((day) => day.awayMinutes),
-      },
-    ],
-  };
-}
-
-function emptyChartOption(label: string): EChartsOption {
-  return {
-    title: {
-      text: label,
-      left: "center",
-      top: "middle",
-      textStyle: {
-        color: "#64748b",
-        fontSize: 14,
-        fontWeight: 600,
-      },
-    },
-    series: [],
-  };
 }

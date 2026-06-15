@@ -1,8 +1,6 @@
 import { formatLocalDate } from "./activitywatch";
 
 const storageKey = "focus-companion.session-clock.v1";
-const maximumTickGapMs = 90_000;
-
 export type FocusSessionStatus = "idle" | "running" | "paused";
 
 export interface FocusSessionClock {
@@ -29,8 +27,8 @@ export function loadFocusSessionClock(nowMs: number): FocusSessionClock {
     }
     return {
       date,
-      // Camera streams never survive an app reload, so a persisted running
-      // session must be explicitly resumed after monitoring is prepared again.
+      // Monitoring connections are re-established after reload, so a persisted
+      // running session must be explicitly resumed.
       status: stored.status === "running" ? "paused" : stored.status,
       elapsedMs: Math.max(0, stored.elapsedMs!),
       completedMs: Math.max(0, Number.isFinite(stored.completedMs) ? stored.completedMs! : 0),
@@ -51,7 +49,7 @@ export function advanceFocusSessionClock(
   return {
     ...current,
     elapsedMs:
-      current.status === "running" && elapsed <= maximumTickGapMs
+      current.status === "running"
         ? current.elapsedMs + elapsed
         : current.elapsedMs,
     lastTickAt: nowMs,
@@ -113,6 +111,20 @@ export function resetFocusSessionClock(nowMs: number): FocusSessionClock {
 
 export function focusSessionTotalMs(clock: FocusSessionClock): number {
   return clock.completedMs + (clock.status === "idle" ? 0 : clock.elapsedMs);
+}
+
+export function focusSessionElapsedMsAt(
+  clock: FocusSessionClock,
+  nowMs: number,
+): number {
+  return advanceFocusSessionClock(clock, nowMs).elapsedMs;
+}
+
+export function focusSessionTotalMsAt(
+  clock: FocusSessionClock,
+  nowMs: number,
+): number {
+  return focusSessionTotalMs(advanceFocusSessionClock(clock, nowMs));
 }
 
 export function persistFocusSessionClock(clock: FocusSessionClock): void {

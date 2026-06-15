@@ -1,6 +1,5 @@
 import { defaultSettings } from "./focus";
 import type {
-  CameraCalibration,
   DailySummary,
   FocusSettings,
   WeeklySummary,
@@ -29,8 +28,13 @@ export function loadStoredState(): StoredAppState {
     const state: StoredAppState = {
       locale: parsed.locale === "en" ? "en" : "zh",
       settings: normalizeSettings(parsed.settings, legacyRaw !== null),
-      dailySummary: parsed.dailySummary ?? null,
-      weeklySummary: parsed.weeklySummary ?? null,
+      dailySummary: normalizeDailySummary(parsed.dailySummary),
+      weeklySummary: parsed.weeklySummary
+        ? {
+            ...parsed.weeklySummary,
+            days: parsed.weeklySummary.days.map((day) => normalizeDailySummary(day)!),
+          }
+        : null,
     };
     if (legacyRaw !== null) saveStoredState(state);
     return state;
@@ -50,15 +54,6 @@ export function normalizeSettings(
     ...(settings ?? {}),
     workdayStartHour,
     workdayEndHour,
-    attentionThreshold: clampNumber(
-      settings?.attentionThreshold,
-      0.3,
-      0.95,
-      defaultSettings.attentionThreshold,
-    ),
-    awaySeconds: migrateLegacyAwayDelay && settings?.awaySeconds === 90
-      ? defaultSettings.awaySeconds
-      : clampInteger(settings?.awaySeconds, 5, 120, defaultSettings.awaySeconds),
     nudgesEnabled: settings?.nudgesEnabled ?? defaultSettings.nudgesEnabled,
     distractNudgeSeconds: clampInteger(
       settings?.distractNudgeSeconds,
@@ -81,7 +76,6 @@ export function normalizeSettings(
         defaultSettings.distractingWindowTitles,
       ),
     ),
-    cameraCalibration: normalizeCameraCalibration(settings?.cameraCalibration),
     reportDir: normalizeOptionalString(settings?.reportDir),
   };
 }
@@ -109,6 +103,45 @@ function defaultStoredState(): StoredAppState {
     settings: defaultSettings,
     dailySummary: null,
     weeklySummary: null,
+  };
+}
+
+function normalizeDailySummary(summary: DailySummary | null | undefined): DailySummary | null {
+  if (!summary) return null;
+  const legacy = summary as Omit<DailySummary, "timeline"> & {
+    neutralMinutes?: number;
+    timeline: Array<{
+      minuteStart: string;
+      app: string;
+      title: string;
+      state: string;
+      activityScore?: number;
+      attentionScore?: number | null;
+      inputActive?: boolean;
+      present?: boolean;
+    }>;
+  };
+  const neutralMinutes = Number.isFinite(legacy.neutralMinutes) ? legacy.neutralMinutes! : 0;
+  const { neutralMinutes: _legacyNeutralMinutes, ...currentSummary } = legacy;
+  return {
+    ...currentSummary,
+    focusedMinutes: Math.max(0, summary.focusedMinutes + neutralMinutes),
+    timeline: legacy.timeline.map((record) => ({
+      minuteStart: record.minuteStart,
+      app: record.app,
+      title: record.title,
+      state: record.state === "neutral" ? "focused" : record.state,
+      activityScore: Number.isFinite(record.activityScore)
+        ? record.activityScore!
+        : record.state === "away"
+          ? 0.2
+          : record.state === "distracted"
+            ? 0.6
+            : 1,
+      inputActive: typeof record.inputActive === "boolean"
+        ? record.inputActive
+        : record.present ?? record.state !== "away",
+    })) as DailySummary["timeline"],
   };
 }
 
@@ -155,33 +188,6 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().slice(0, 1_000);
   return normalized || undefined;
-}
-
-function normalizeCameraCalibration(
-  value: CameraCalibration | undefined,
-): CameraCalibration | undefined {
-  if (
-    !value ||
-    !isFiniteInRange(value.headTurn, 0, 1) ||
-    !isFiniteInRange(value.eyeLookSideOrUp, 0, 1) ||
-    !isFiniteInRange(value.eyeLookDown, 0, 1) ||
-    !isFiniteInRange(value.confidence, 0.05, 1) ||
-    typeof value.calibratedAt !== "string" ||
-    !Number.isFinite(new Date(value.calibratedAt).getTime())
-  ) {
-    return undefined;
-  }
-  return {
-    headTurn: value.headTurn,
-    eyeLookSideOrUp: value.eyeLookSideOrUp,
-    eyeLookDown: value.eyeLookDown,
-    confidence: value.confidence,
-    calibratedAt: value.calibratedAt,
-  };
-}
-
-function isFiniteInRange(value: number, min: number, max: number): boolean {
-  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
 }
 
 function clampNumber(value: number | undefined, min: number, max: number, fallback: number): number {

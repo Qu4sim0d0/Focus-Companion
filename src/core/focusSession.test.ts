@@ -53,12 +53,12 @@ describe("focus session clock", () => {
     expect(focusSessionTotalMs(secondRunning)).toBe(50_000);
   });
 
-  it("does not count a sleep-sized gap", () => {
+  it("continues across throttled or sleep-sized timer gaps", () => {
     const startAt = new Date(2026, 5, 15, 9).getTime();
     const running = startFocusSessionClock(loadFocusSessionClock(startAt), startAt);
     const advanced = advanceFocusSessionClock(running, startAt + 10 * 60_000);
 
-    expect(advanced.elapsedMs).toBe(0);
+    expect(advanced.elapsedMs).toBe(10 * 60_000);
   });
 
   it("restores a stale running session as paused", () => {
@@ -77,7 +77,7 @@ describe("focus session clock", () => {
     expect(restored.completedMs).toBe(120_000);
   });
 
-  it("restores a fresh running session as paused because camera state cannot survive reload", () => {
+  it("restores a running session as paused until monitoring reconnects", () => {
     const now = new Date(2026, 5, 15, 9).getTime();
     persistFocusSessionClock({
       date: "2026-06-15",

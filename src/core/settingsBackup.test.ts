@@ -10,20 +10,12 @@ describe("settings backup", () => {
       allowedWindowTitles: ["Online course"],
       distractingWindowTitles: ["YouTube"],
       nudgesEnabled: true,
-      cameraCalibration: {
-        headTurn: 0.1,
-        eyeLookSideOrUp: 0.2,
-        eyeLookDown: 0.6,
-        confidence: 0.8,
-        calibratedAt: "2026-06-15T00:00:00.000Z",
-      },
     }, new Date("2026-06-15T00:00:00.000Z"));
     const parsed = parseSettingsBackup(text);
 
     expect(parsed.locale).toBe("en");
     expect(parsed.settings.allowedApps).toContain("WPS Office");
     expect(parsed.settings.allowedWindowTitles).toEqual(["Online course"]);
-    expect(parsed.settings.cameraCalibration?.eyeLookDown).toBe(0.6);
     expect(text).not.toContain("dailySummary");
     expect(text).not.toContain("windowEvents");
   });
@@ -34,8 +26,6 @@ describe("settings backup", () => {
       version: 1,
       locale: "invalid",
       settings: {
-        attentionThreshold: 99,
-        awaySeconds: -10,
         workdayStartHour: 42,
         allowedApps: [" Code ", "Code", 123],
         allowedWindowTitles: [" Course ", "Course"],
@@ -45,8 +35,6 @@ describe("settings backup", () => {
     }));
 
     expect(parsed.locale).toBe("zh");
-    expect(parsed.settings.attentionThreshold).toBe(0.95);
-    expect(parsed.settings.awaySeconds).toBe(5);
     expect(parsed.settings.workdayStartHour).toBe(23);
     expect(parsed.settings.allowedApps).toEqual(["Code"]);
     expect(parsed.settings.allowedWindowTitles).toEqual(["Course"]);

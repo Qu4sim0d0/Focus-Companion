@@ -1,18 +1,14 @@
 import { init, use } from "echarts/core";
-import { LineChart } from "echarts/charts";
+import { BarChart } from "echarts/charts";
 import {
-  DataZoomComponent,
   GridComponent,
-  MarkLineComponent,
   TooltipComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
 use([
-  LineChart,
-  DataZoomComponent,
+  BarChart,
   GridComponent,
-  MarkLineComponent,
   TooltipComponent,
   CanvasRenderer,
 ]);

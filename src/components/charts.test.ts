@@ -1,79 +1,57 @@
 import { describe, expect, it } from "vitest";
 import { dailyBreakdownOption, dailyTimelineOption, weeklyTrendOption } from "./charts";
-import { summarizeTimeline } from "../core/focus";
-import type { ActivityWatchEvent, CameraMetric, MinuteFocusRecord } from "../types";
+import { activityScoreForState, summarizeTimeline } from "../core/focus";
+import type { MinuteFocusRecord } from "../types";
 
 describe("daily timeline chart", () => {
-  it("renders a draggable time-based attention line", () => {
+  it("renders one colored bar per minute for the latest three hours", () => {
     const timeline: MinuteFocusRecord[] = [
-      ...records("2026-06-14T09:00:00.000Z", "focused"),
-      ...records("2026-06-14T09:05:00.000Z", "distracted"),
-      ...records("2026-06-14T09:10:00.000Z", "away"),
+      record("2026-06-14T08:59:00.000", "focused"),
+      record("2026-06-14T09:00:00.000", "focused"),
+      record("2026-06-14T09:01:00.000", "distracted"),
+      record("2026-06-14T09:02:00.000", "away"),
     ];
     const option = dailyTimelineOption(
       summarizeTimeline("2026-06-14", timeline),
       "zh",
-      new Date("2026-06-14T10:00:00"),
+      new Date("2026-06-14T12:00:00"),
     );
+    const series = Array.isArray(option.series) ? option.series[0] : undefined;
+    const data = series && "data" in series && Array.isArray(series.data)
+      ? series.data
+      : [];
 
-    expect(option.dataZoom).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "inside" }),
-        expect.objectContaining({ type: "slider" }),
-      ]),
-    );
-    expect(option.xAxis).toEqual(expect.objectContaining({ type: "time" }));
-    expect(option.yAxis).toEqual(expect.objectContaining({ min: 0, max: 100 }));
-    expect(option.series).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "注意力",
-          type: "line",
-          data: expect.arrayContaining([expect.arrayContaining([expect.any(Number), 0])]),
-        }),
-      ]),
-    );
-    const line = Array.isArray(option.series) ? option.series[0] : undefined;
-    const data = line && "data" in line && Array.isArray(line.data) ? line.data : [];
-    expect(data).toHaveLength(15);
-    expect(new Set(data.map((point) => Array.isArray(point) ? point[0] : undefined)).size).toBe(15);
+    expect(option.dataZoom).toBeUndefined();
+    expect(option.xAxis).toEqual(expect.objectContaining({
+      type: "time",
+      min: new Date("2026-06-14T09:00:00").getTime(),
+      max: new Date("2026-06-14T12:00:00").getTime(),
+    }));
+    expect(series).toEqual(expect.objectContaining({ type: "bar" }));
+    expect(data).toHaveLength(3);
+    expect(data.map((item) => item.value[1])).toEqual([100, 60, 20]);
+    expect(new Set(data.map((item) => item.itemStyle.color)).size).toBe(3);
   });
 
-  it("uses raw camera samples so the live line changes within a minute", () => {
-    const timeline = records("2026-06-14T09:00:00.000Z", "focused");
-    const cameraEvents: ActivityWatchEvent<CameraMetric>[] = [5, 15, 25, 35].map((second, index) => ({
-      timestamp: `2026-06-14T09:00:${String(second).padStart(2, "0")}.000Z`,
-      duration: 0,
-      data: {
-        present: true,
-        face_count: 1,
-        attention_score: [0.82, 0.67, 0.91, 0.74][index],
-        looking_away: false,
-        eyes_visible: true,
-        confidence: 0.9,
-        detector_ready: true,
-      },
-    }));
+  it("clamps the three-hour window to the start of the day", () => {
     const option = dailyTimelineOption(
-      summarizeTimeline("2026-06-14", timeline),
+      summarizeTimeline("2026-06-14", [
+        record("2026-06-14T00:15:00.000", "focused"),
+      ]),
       "zh",
-      new Date("2026-06-14T10:00:00Z"),
-      cameraEvents,
+      new Date("2026-06-14T01:30:00"),
     );
-    const line = Array.isArray(option.series) ? option.series[0] : undefined;
-    const data = line && "data" in line && Array.isArray(line.data) ? line.data : [];
-    const scores = data.map((point) => Array.isArray(point) ? point[1] : undefined);
 
-    expect(data).toHaveLength(4);
-    expect(new Set(scores).size).toBe(4);
+    expect(option.xAxis).toEqual(expect.objectContaining({
+      min: new Date("2026-06-14T00:00:00.000").getTime(),
+      max: new Date("2026-06-14T01:30:00").getTime(),
+    }));
   });
 });
 
 describe("empty chart states", () => {
   it("does not render an equal-slice pie for a zero-minute day", () => {
-    const summary = summarizeTimeline("2026-06-14", []);
-    const option = dailyBreakdownOption(summary, "zh");
-
+    const option = dailyBreakdownOption(summarizeTimeline("2026-06-14", []), "zh");
     expect(option.series).toEqual([]);
     expect(option.title).toEqual(expect.objectContaining({ text: "暂无有效记录" }));
   });
@@ -84,20 +62,21 @@ describe("empty chart states", () => {
       weekLabel: "2026-06-08 - 2026-06-14",
       days: [emptyDay],
     }, "en");
-
     expect(option.series).toEqual([]);
     expect(option.title).toEqual(expect.objectContaining({ text: "No valid records yet" }));
   });
 });
 
-function records(firstMinute: string, state: MinuteFocusRecord["state"]): MinuteFocusRecord[] {
-  const start = new Date(firstMinute).getTime();
-  return Array.from({ length: 5 }, (_, index) => ({
-    minuteStart: new Date(start + index * 60_000).toISOString(),
+function record(
+  minuteStart: string,
+  state: MinuteFocusRecord["state"],
+): MinuteFocusRecord {
+  return {
+    minuteStart,
     app: state === "away" ? "" : "Code",
     title: "",
     state,
-    attentionScore: 0,
-    present: state !== "away",
-  }));
+    activityScore: activityScoreForState(state),
+    inputActive: state === "focused",
+  };
 }

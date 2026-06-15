@@ -43,20 +43,39 @@ describe("local storage persistence", () => {
     expect(state.weeklySummary?.days).toHaveLength(1);
   });
 
-  it("migrates the old fixed away delay once but preserves a new explicit 90 seconds", () => {
-    backing.set("focus-companion.state.v1", JSON.stringify({
+  it("migrates legacy neutral time into focused time", () => {
+    backing.set("focus-companion.state.v2", JSON.stringify({
       locale: "zh",
-      settings: { ...defaultSettings, awaySeconds: 90 },
-    }));
-    expect(loadStoredState().settings.awaySeconds).toBe(15);
-
-    saveStoredState({
-      locale: "zh",
-      settings: { ...defaultSettings, awaySeconds: 90 },
-      dailySummary: null,
+      settings: defaultSettings,
+      dailySummary: {
+        date: "2026-06-15",
+        totalMinutes: 3,
+        focusedMinutes: 1,
+        neutralMinutes: 1,
+        distractedMinutes: 1,
+        awayMinutes: 0,
+        focusRatio: 0.5,
+        longestFocusRunMinutes: 1,
+        timeline: [
+          {
+            minuteStart: "2026-06-15T09:00:00.000",
+            app: "Code",
+            title: "",
+            state: "neutral",
+            attentionScore: 0.7,
+            present: true,
+          },
+        ],
+      },
       weeklySummary: null,
-    });
-    expect(loadStoredState().settings.awaySeconds).toBe(90);
+    }));
+
+    const summary = loadStoredState().dailySummary;
+    expect(summary?.focusedMinutes).toBe(2);
+    expect(summary?.timeline[0].state).toBe("focused");
+    expect(summary?.timeline[0].activityScore).toBe(1);
+    expect(summary?.timeline[0].inputActive).toBe(true);
+    expect("neutralMinutes" in (summary ?? {})).toBe(false);
   });
 
   it("adds the default nudge preference to older stored settings", () => {
@@ -78,8 +97,6 @@ describe("local storage persistence", () => {
 
   it("normalizes malformed settings into supported ranges", () => {
     const settings = normalizeSettings({
-      attentionThreshold: 12,
-      awaySeconds: -5,
       distractNudgeSeconds: 12_000,
       workdayStartHour: -2,
       workdayEndHour: 30,
@@ -90,8 +107,6 @@ describe("local storage persistence", () => {
       rules: [{ pattern: "  YouTube  ", mode: "distract", matchTitle: true }],
     });
 
-    expect(settings.attentionThreshold).toBe(0.95);
-    expect(settings.awaySeconds).toBe(5);
     expect(settings.distractNudgeSeconds).toBe(600);
     expect(settings.workdayStartHour).toBe(0);
     expect(settings.workdayEndHour).toBe(23);
@@ -116,30 +131,6 @@ describe("local storage persistence", () => {
       dailySummary: null,
       weeklySummary: null,
     })).toBe(false);
-  });
-
-  it("keeps valid camera calibration and drops malformed profiles", () => {
-    const valid = normalizeSettings({
-      cameraCalibration: {
-        headTurn: 0.1,
-        eyeLookSideOrUp: 0.2,
-        eyeLookDown: 0.6,
-        confidence: 0.8,
-        calibratedAt: "2026-06-15T00:00:00.000Z",
-      },
-    });
-    const invalid = normalizeSettings({
-      cameraCalibration: {
-        headTurn: 4,
-        eyeLookSideOrUp: 0.2,
-        eyeLookDown: 0.6,
-        confidence: 0.8,
-        calibratedAt: "not-a-date",
-      },
-    });
-
-    expect(valid.cameraCalibration?.eyeLookDown).toBe(0.6);
-    expect(invalid.cameraCalibration).toBeUndefined();
   });
 
   it("migrates old title rules into the separate window lists", () => {

@@ -15,25 +15,9 @@ export interface WindowEventData {
   url?: string;
 }
 
-export interface CameraMetric {
-  present: boolean;
-  face_count: number;
-  attention_score: number;
-  looking_away: boolean;
-  eyes_visible: boolean;
-  confidence: number;
-  detector_ready?: boolean;
-  head_turn?: number;
-  eye_look_side_or_up?: number;
-  eye_look_down?: number;
-}
-
-export interface CameraCalibration {
-  headTurn: number;
-  eyeLookSideOrUp: number;
-  eyeLookDown: number;
-  confidence: number;
-  calibratedAt: IsoTimestamp;
+export interface InputMetric {
+  idleSeconds: number;
+  active: boolean;
 }
 
 export interface FocusSessionData {
@@ -43,7 +27,7 @@ export interface FocusSessionData {
 export interface FocusInputEvents {
   date: string;
   windowEvents: ActivityWatchEvent<WindowEventData>[];
-  cameraEvents: ActivityWatchEvent<CameraMetric>[];
+  inputEvents: ActivityWatchEvent<InputMetric>[];
   sessionEvents: ActivityWatchEvent<FocusSessionData>[];
 }
 
@@ -58,14 +42,11 @@ export interface FocusSettings {
   workdayEndHour: number;
   nudgesEnabled: boolean;
   distractNudgeSeconds: number;
-  awaySeconds: number;
-  attentionThreshold: number;
   rules: AppRule[];
   allowedApps: string[];
   distractingApps: string[];
   allowedWindowTitles: string[];
   distractingWindowTitles: string[];
-  cameraCalibration?: CameraCalibration;
   reportDir?: string;
 }
 
@@ -74,8 +55,8 @@ export interface MinuteFocusRecord {
   app: string;
   title: string;
   state: FocusState;
-  attentionScore: number | null;
-  present: boolean;
+  activityScore: number;
+  inputActive: boolean;
 }
 
 export interface DailySummary {

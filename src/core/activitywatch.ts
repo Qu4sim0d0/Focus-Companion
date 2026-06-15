@@ -1,4 +1,9 @@
-import type { ActivityWatchEvent, CameraMetric, FocusSessionData, WindowEventData } from "../types";
+import type {
+  ActivityWatchEvent,
+  FocusSessionData,
+  InputMetric,
+  WindowEventData,
+} from "../types";
 
 export interface ActivityWatchBucket {
   id: string;
@@ -24,14 +29,14 @@ export class ActivityWatchClient {
     return Object.keys(buckets).find((id) => id.startsWith("aw-watcher-window"));
   }
 
-  async ensureCameraBucket(hostname = "local"): Promise<string> {
-    const id = `focus-camera_${hostname}`;
+  async ensureInputBucket(hostname = "local"): Promise<string> {
+    const id = `focus-input_${hostname}`;
     const buckets = await this.listBuckets();
     if (buckets[id]) return id;
 
     await this.postJson(`/buckets/${encodeURIComponent(id)}`, {
       client: "focus-companion",
-      type: "focus.camera.metric",
+      type: "focus.input.metric",
       hostname,
     });
     return id;
@@ -50,8 +55,12 @@ export class ActivityWatchClient {
     return id;
   }
 
-  async heartbeatCameraMetric(bucketId: string, metric: CameraMetric, pulsetimeSeconds = 10): Promise<void> {
-    const event: ActivityWatchEvent<CameraMetric> = {
+  async heartbeatInputMetric(
+    bucketId: string,
+    metric: InputMetric,
+    pulsetimeSeconds = 65,
+  ): Promise<void> {
+    const event: ActivityWatchEvent<InputMetric> = {
       timestamp: new Date().toISOString(),
       duration: 0,
       data: metric,
@@ -98,10 +107,10 @@ export class ActivityWatchClient {
     return this.getEvents<WindowEventData>(bucketId, start, end);
   }
 
-  async getTodayCameraEvents(hostname = "local"): Promise<ActivityWatchEvent<CameraMetric>[]> {
-    const bucketId = `focus-camera_${hostname}`;
+  async getTodayInputEvents(hostname = "local"): Promise<ActivityWatchEvent<InputMetric>[]> {
+    const bucketId = `focus-input_${hostname}`;
     const { start, end } = todayRange();
-    return this.getEvents<CameraMetric>(bucketId, start, end).catch(() => []);
+    return this.getEvents<InputMetric>(bucketId, start, end).catch(() => []);
   }
 
   async getTodaySessionEvents(hostname = "local"): Promise<ActivityWatchEvent<FocusSessionData>[]> {

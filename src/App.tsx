@@ -1,31 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ActivityWatchClient, formatLocalDate, todayRange } from "./core/activitywatch";
-import { CameraMetricSource } from "./core/camera";
-import { buildCameraCalibration } from "./core/cameraCalibration";
 import {
   openAccessibilitySettings,
   openActivityWatchWindow,
   requestFocusNotificationPermission,
-  sendFocusNotification,
   startActivityWatchApp,
 } from "./core/desktopBridge";
 import {
   aggregateDailyFocus,
   buildWeeklySummary,
   defaultSettings,
-  explainWindowScore,
   summarizeTimeline,
 } from "./core/focus";
-import {
-  evaluateNudge,
-  isFreshTimestamp,
-  isWithinWorkday,
-  type NudgeTracker,
-} from "./core/nudges";
+import { getInputActivitySnapshot } from "./core/inputActivity";
+import { type NudgeTracker } from "./core/nudges";
 import {
   advanceFocusSessionClock,
   endFocusSessionClock,
-  focusSessionTotalMs,
   loadFocusSessionClock,
   pauseFocusSessionClock,
   persistFocusSessionClock,
@@ -35,7 +33,6 @@ import {
   type FocusSessionClock,
 } from "./core/focusSession";
 import { buildDailyMarkdown, buildWeeklyMarkdown, type ChartAsset, saveMarkdownReport } from "./core/report";
-import { buildSimulatedFocusInputs } from "./core/simulation";
 import {
   currentDailySummary,
   loadStoredState,
@@ -47,24 +44,28 @@ import {
   parseSettingsBackup,
   serializeSettingsBackup,
 } from "./core/settingsBackup";
-import { describeCameraError } from "./core/userErrors";
-import { ChartPanel, type ChartPanelHandle } from "./components/ChartPanel";
+import { TimelineChartPanel, type ChartPanelHandle } from "./components/ChartPanel";
 import { DailyBreakdownChart, WeeklyTrendChart } from "./components/SummaryCharts";
-import { dailyTimelineOption } from "./components/charts";
+import { Layout, MainContent, Sidebar } from "./components/AppLayout";
+import {
+  InputActivityMetric,
+  LiveStatus,
+  type FocusNudge,
+} from "./components/LiveStatus";
+import { QuickStart, SessionTotal } from "./components/SessionPanels";
 import { t, type Locale } from "./i18n";
 import type {
   ActivityWatchEvent,
-  CameraMetric,
   DailySummary,
   FocusInputEvents,
   FocusSessionData,
   FocusSettings,
+  InputMetric,
   WeeklySummary,
   WindowEventData,
 } from "./types";
 
 const aw = new ActivityWatchClient();
-const calibrationSampleTarget = 8;
 
 interface LoadedSummaries {
   dailySummary: DailySummary;
@@ -77,38 +78,18 @@ interface ObservedApp {
   seconds: number;
 }
 
-interface SimulationSnapshot {
-  inputs: FocusInputEvents | null;
-  dailySummary: DailySummary | null;
-  weeklySummary: WeeklySummary | null;
-}
-
 interface ErrorNotice {
-  source: "aw" | "camera";
   message: string;
 }
 
-interface FocusNudge {
-  app: string;
-  distractedSeconds: number;
-}
-
 export function App() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const settingsImportRef = useRef<HTMLInputElement | null>(null);
-  const cameraRef = useRef<CameraMetricSource | null>(null);
-  const cameraBucketIdRef = useRef<string | undefined>(undefined);
-  const cameraTickRef = useRef<number | undefined>(undefined);
-  const noFaceSinceRef = useRef<number | null>(null);
+  const inputBucketIdRef = useRef<string | undefined>(undefined);
   const chartsRef = useRef<Map<string, ChartPanelHandle>>(new Map());
   const todayInputsRef = useRef<FocusInputEvents | null>(null);
-  const localCameraEventsRef = useRef<ActivityWatchEvent<CameraMetric>[]>([]);
+  const localInputEventsRef = useRef<ActivityWatchEvent<InputMetric>[]>([]);
   const localSessionEventsRef = useRef<ActivityWatchEvent<FocusSessionData>[]>([]);
-  const simulationSnapshotRef = useRef<SimulationSnapshot | null>(null);
-  const calibrationActiveRef = useRef(false);
-  const calibrationSamplesRef = useRef<CameraMetric[]>([]);
   const awBusyRef = useRef(false);
-  const cameraStartingRef = useRef(false);
   const sessionStartingRef = useRef(false);
   const monitoringReadyRef = useRef(false);
   const nudgeTrackerRef = useRef<NudgeTracker>({
@@ -130,11 +111,8 @@ export function App() {
   const [distractingWindowTitlesText, setDistractingWindowTitlesText] = useState(
     storedState.settings.distractingWindowTitles.join("\n"),
   );
-  const [attentionThreshold, setAttentionThreshold] = useState(storedState.settings.attentionThreshold);
   const [status, setStatus] = useState(() => t(storedState.locale, "ready"));
   const [connected, setConnected] = useState(false);
-  const [cameraRunning, setCameraRunning] = useState(false);
-  const [cameraMetric, setCameraMetric] = useState<CameraMetric | null>(null);
   const [dailySummary, setDailySummary] = useState<DailySummary | null>(
     currentDailySummary(storedState.dailySummary),
   );
@@ -142,19 +120,14 @@ export function App() {
   const [todayInputs, setTodayInputs] = useState<FocusInputEvents | null>(null);
   const [observedApps, setObservedApps] = useState<ObservedApp[]>([]);
   const [appSearch, setAppSearch] = useState("");
-  const [appFilter, setAppFilter] = useState<"all" | "focus" | "neutral" | "distract">("all");
-  const [simulationMode, setSimulationMode] = useState(false);
+  const [appFilter, setAppFilter] = useState<"all" | "focus" | "distract">("all");
   const [awBusy, setAwBusy] = useState(false);
-  const [cameraStarting, setCameraStarting] = useState(false);
   const [sessionStarting, setSessionStarting] = useState(false);
-  const [calibrationActive, setCalibrationActive] = useState(false);
-  const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [errorNotice, setErrorNotice] = useState<ErrorNotice | null>(null);
   const [focusNudge, setFocusNudge] = useState<FocusNudge | null>(null);
   const [clearDataArmed, setClearDataArmed] = useState(false);
   const [resetSettingsArmed, setResetSettingsArmed] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const [nowMs, setNowMs] = useState(Date.now());
   const [focusSessionClock, setFocusSessionClock] = useState<FocusSessionClock>(
     () => focusSessionRef.current!,
   );
@@ -182,24 +155,6 @@ export function App() {
   }, [settingsMenuOpen]);
 
   useEffect(() => {
-    const updateClock = () => {
-      const now = Date.now();
-      const nextFocusSession = advanceFocusSessionClock(focusSessionRef.current!, now);
-      focusSessionRef.current = nextFocusSession;
-      persistFocusSessionClock(nextFocusSession);
-      setFocusSessionClock(nextFocusSession);
-      setNowMs(now);
-    };
-
-    updateClock();
-    const intervalId = window.setInterval(updateClock, 1_000);
-    return () => {
-      window.clearInterval(intervalId);
-      updateClock();
-    };
-  }, []);
-
-  useEffect(() => {
     if (!connected) return;
     let cancelled = false;
     let timeoutId: number | undefined;
@@ -224,42 +179,52 @@ export function App() {
   }, [connected]);
 
   useEffect(() => {
-    const snapshot = simulationSnapshotRef.current;
     saveStoredState({
       locale,
       settings,
-      dailySummary: simulationMode ? snapshot?.dailySummary ?? null : dailySummary,
-      weeklySummary: simulationMode ? snapshot?.weeklySummary ?? null : weeklySummary,
+      dailySummary,
+      weeklySummary,
     });
-  }, [dailySummary, locale, settings, simulationMode, weeklySummary]);
+  }, [dailySummary, locale, settings, weeklySummary]);
 
-  const localToday = formatLocalDate(new Date(nowMs));
   useEffect(() => {
-    if (simulationMode || !dailySummary || dailySummary.date === localToday) return;
-    todayInputsRef.current = null;
-    setTodayInputs(null);
-    setDailySummary(null);
-    setFocusNudge(null);
-    nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
-  }, [dailySummary, localToday, simulationMode]);
+    const now = new Date();
+    const nextDay = new Date(now);
+    nextDay.setHours(24, 0, 1, 0);
+    const timeoutId = window.setTimeout(() => {
+      const localToday = formatLocalDate(new Date());
+      if (dailySummary && dailySummary.date !== localToday) {
+        todayInputsRef.current = null;
+        setTodayInputs(null);
+        setDailySummary(null);
+        setFocusNudge(null);
+        nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
+      }
+      const nextFocusSession = resetFocusSessionClock(Date.now());
+      focusSessionRef.current = nextFocusSession;
+      setFocusSessionClock(nextFocusSession);
+      persistFocusSessionClock(nextFocusSession);
+    }, Math.max(1_000, nextDay.getTime() - now.getTime()));
+    return () => window.clearTimeout(timeoutId);
+  }, [dailySummary, focusSessionClock.date]);
 
   const loadActivityWatchSummaries = useCallback(async (
     activeSettings: FocusSettings = settings,
   ): Promise<LoadedSummaries> => {
     const today = todayRange();
     const todayDate = today.date;
-    const [windowEvents, storedCameraEvents, storedSessionEvents, weeklyDays] = await Promise.all([
+    const [windowEvents, storedInputEvents, storedSessionEvents, weeklyDays] = await Promise.all([
       aw.getTodayWindowEvents(),
-      aw.getTodayCameraEvents(),
+      aw.getTodayInputEvents(),
       aw.getTodaySessionEvents(),
       loadWeeklySummaries(activeSettings),
     ]);
-    const cameraEvents = mergeEvents(storedCameraEvents, localCameraEventsRef.current);
+    const inputEvents = mergeEvents(storedInputEvents, localInputEventsRef.current);
     const sessionEvents = mergeEvents(storedSessionEvents, localSessionEventsRef.current);
     const todaySummary = aggregateDailyFocus(
       todayDate,
       windowEvents,
-      cameraEvents,
+      inputEvents,
       activeSettings,
       sessionEvents,
     );
@@ -271,7 +236,7 @@ export function App() {
     return {
       dailySummary: todaySummary,
       weeklySummary: nextWeeklySummary,
-      todayInputs: { date: todayDate, windowEvents, cameraEvents, sessionEvents },
+      todayInputs: { date: todayDate, windowEvents, inputEvents, sessionEvents },
     };
   }, [settings]);
 
@@ -290,7 +255,7 @@ export function App() {
     const nextDaily = aggregateDailyFocus(
       inputs.date,
       inputs.windowEvents,
-      inputs.cameraEvents,
+      inputs.inputEvents,
       activeSettings,
       inputs.sessionEvents,
     );
@@ -321,7 +286,7 @@ export function App() {
       setConnected(false);
       const message = error instanceof Error ? `${t(locale, "awFailed")} ${error.message}` : t(locale, "awFailed");
       setStatus(message);
-      setErrorNotice({ source: "aw", message });
+      setErrorNotice({ message });
     } finally {
       awBusyRef.current = false;
       setAwBusy(false);
@@ -329,10 +294,6 @@ export function App() {
   }, [locale]);
 
   const refreshActivityWatch = useCallback(async (): Promise<boolean> => {
-    if (simulationMode) {
-      await refreshObservedApps();
-      return false;
-    }
     if (awBusyRef.current) return connected;
     awBusyRef.current = true;
     setAwBusy(true);
@@ -353,16 +314,16 @@ export function App() {
       setConnected(false);
       const message = error instanceof Error ? `${t(locale, "awFailed")} ${error.message}` : t(locale, "awFailed");
       setStatus(message);
-      setErrorNotice({ source: "aw", message });
+      setErrorNotice({ message });
       return false;
     } finally {
       awBusyRef.current = false;
       setAwBusy(false);
     }
-  }, [applyLoadedSummaries, connected, loadActivityWatchSummaries, locale, refreshObservedApps, simulationMode]);
+  }, [applyLoadedSummaries, connected, loadActivityWatchSummaries, locale]);
 
   useEffect(() => {
-    if (!connected || !hasLoadedSummaries || simulationMode) return;
+    if (!connected || !hasLoadedSummaries) return;
     let cancelled = false;
     let inFlight = false;
 
@@ -384,27 +345,24 @@ export function App() {
         .finally(() => {
           inFlight = false;
         });
-    }, 10_000);
+    }, 60_000);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [applyLoadedSummaries, connected, hasLoadedSummaries, loadActivityWatchSummaries, simulationMode]);
+  }, [applyLoadedSummaries, connected, hasLoadedSummaries, loadActivityWatchSummaries]);
 
   const saveRuleSettings = useCallback(async () => {
     const nextSettings: FocusSettings = {
       ...settings,
-      attentionThreshold,
       allowedApps: parseRuleList(allowedAppsText),
       distractingApps: parseRuleList(distractingAppsText),
       allowedWindowTitles: parseRuleList(allowedWindowTitlesText),
       distractingWindowTitles: parseRuleList(distractingWindowTitlesText),
     };
     setSettings(nextSettings);
-    if (simulationMode && todayInputsRef.current) {
-      applyInputEvents(todayInputsRef.current, nextSettings);
-    } else if (connected) {
+    if (connected) {
       try {
         applyLoadedSummaries(await loadActivityWatchSummaries(nextSettings));
       } catch {
@@ -423,7 +381,6 @@ export function App() {
     allowedAppsText,
     allowedWindowTitlesText,
     applyLoadedSummaries,
-    attentionThreshold,
     connected,
     dailySummary,
     distractingAppsText,
@@ -431,36 +388,10 @@ export function App() {
     loadActivityWatchSummaries,
     locale,
     settings,
-    simulationMode,
     todayInputs,
     weeklySummary,
     applyInputEvents,
   ]);
-
-  const updateAttentionThreshold = useCallback((nextThreshold: number) => {
-    setAttentionThreshold(nextThreshold);
-    const nextSettings = { ...settings, attentionThreshold: nextThreshold };
-    setSettings(nextSettings);
-    if (todayInputs) {
-      applyInputEvents(todayInputs, nextSettings);
-    } else if (dailySummary || weeklySummary) {
-      setDailySummary(null);
-      setWeeklySummary(null);
-      setStatus(t(locale, "rulesReloadRequired"));
-    }
-  }, [applyInputEvents, dailySummary, locale, settings, todayInputs, weeklySummary]);
-
-  const updateAwaySeconds = useCallback((nextAwaySeconds: number) => {
-    const nextSettings = { ...settings, awaySeconds: nextAwaySeconds };
-    setSettings(nextSettings);
-    if (todayInputs) {
-      applyInputEvents(todayInputs, nextSettings);
-    } else if (dailySummary || weeklySummary) {
-      setDailySummary(null);
-      setWeeklySummary(null);
-      setStatus(t(locale, "rulesReloadRequired"));
-    }
-  }, [applyInputEvents, dailySummary, locale, settings, todayInputs, weeklySummary]);
 
   const updateNudgesEnabled = useCallback(async (enabled: boolean) => {
     setSettings((current) => ({ ...current, nudgesEnabled: enabled }));
@@ -490,7 +421,7 @@ export function App() {
 
   const setObservedAppMode = useCallback((
     app: string,
-    mode: "focus" | "neutral" | "distract",
+    mode: "focus" | "distract",
   ) => {
     const sameApp = (value: string) => value.toLocaleLowerCase() === app.toLocaleLowerCase();
     const nextAllowed = settings.allowedApps.filter((value) => !sameApp(value));
@@ -547,12 +478,16 @@ export function App() {
   }, [applyInputEvents]);
 
   useEffect(() => {
-    if (focusSessionClock.status !== "running" || simulationMode) return;
+    if (focusSessionClock.status !== "running") return;
     let cancelled = false;
     let timeoutId: number | undefined;
 
     const pulse = async () => {
-      appendSessionEvent(true);
+      const now = Date.now();
+      const persistedClock = advanceFocusSessionClock(focusSessionRef.current!, now);
+      focusSessionRef.current = persistedClock;
+      persistFocusSessionClock(persistedClock);
+      appendSessionEvent(true, new Date(now));
       if (connected) {
         try {
           const bucketId = await aw.ensureSessionBucket("local");
@@ -561,7 +496,7 @@ export function App() {
           setConnected(false);
         }
       }
-      if (!cancelled) timeoutId = window.setTimeout(pulse, 30_000);
+      if (!cancelled) timeoutId = window.setTimeout(pulse, 60_000);
     };
 
     void pulse();
@@ -569,7 +504,7 @@ export function App() {
       cancelled = true;
       if (timeoutId) window.clearTimeout(timeoutId);
     };
-  }, [appendSessionEvent, connected, focusSessionClock.status, simulationMode]);
+  }, [appendSessionEvent, connected, focusSessionClock.status]);
 
   const writeSessionBoundary = useCallback((running: boolean) => {
     appendSessionEvent(running);
@@ -605,15 +540,15 @@ export function App() {
     setStatus(t(locale, "sessionPausedMonitoringLost"));
   }, [connected, focusSessionClock.status, locale, pauseFocusSession]);
 
-  const appendLiveCameraMetric = useCallback((metric: CameraMetric, sampledAt = new Date()) => {
+  const appendInputMetric = useCallback((metric: InputMetric, sampledAt = new Date()) => {
     const date = formatLocalDate(sampledAt);
-    const cameraEvent: ActivityWatchEvent<CameraMetric> = {
+    const inputEvent: ActivityWatchEvent<InputMetric> = {
       timestamp: sampledAt.toISOString(),
-      duration: 0,
+      duration: 65,
       data: metric,
     };
-    localCameraEventsRef.current = keepTodayEvents(
-      [...localCameraEventsRef.current, cameraEvent],
+    localInputEventsRef.current = keepTodayEvents(
+      [...localInputEventsRef.current, inputEvent],
       date,
     );
 
@@ -622,69 +557,49 @@ export function App() {
       : {
           date,
           windowEvents: [],
-          cameraEvents: [],
+          inputEvents: [],
           sessionEvents: localSessionEventsRef.current,
         };
     applyInputEvents(
       {
         ...current,
-        cameraEvents: mergeEvents(current.cameraEvents, [cameraEvent]),
+        inputEvents: mergeEvents(current.inputEvents, [inputEvent]),
       },
       settingsRef.current,
     );
   }, [applyInputEvents]);
 
-  const startSimulation = useCallback(() => {
-    if (focusSessionClock.status !== "idle") return;
-    if (!simulationMode) {
-      simulationSnapshotRef.current = {
-        inputs: todayInputsRef.current,
-        dailySummary,
-        weeklySummary,
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const pulse = async () => {
+      const snapshot = getInputActivitySnapshot();
+      if (!snapshot.available) {
+        if (!cancelled) timeoutId = window.setTimeout(pulse, 60_000);
+        return;
+      }
+      const metric: InputMetric = {
+        idleSeconds: Math.round(snapshot.idleSeconds),
+        active: snapshot.active,
       };
-    }
-    if (cameraTickRef.current) window.clearTimeout(cameraTickRef.current);
-    cameraTickRef.current = undefined;
-    cameraRef.current?.stop();
-    cameraRef.current = null;
-    calibrationActiveRef.current = false;
-    calibrationSamplesRef.current = [];
-    setCalibrationActive(false);
-    setCalibrationProgress(0);
-    setCameraRunning(false);
-    const inputs = buildSimulatedFocusInputs(new Date(), 45);
-    const latestMetric = [...inputs.cameraEvents]
-      .reverse()
-      .find((event) => event.data.present)?.data ?? null;
-    setSimulationMode(true);
-    setCameraMetric(latestMetric);
-    applyInputEvents(inputs);
-    setStatus(t(locale, "simulationLoaded"));
-    setErrorNotice(null);
-  }, [
-    applyInputEvents,
-    dailySummary,
-    focusSessionClock.status,
-    locale,
-    simulationMode,
-    weeklySummary,
-  ]);
+      appendInputMetric(metric);
+      try {
+        inputBucketIdRef.current ??= await aw.ensureInputBucket("local");
+        await aw.heartbeatInputMetric(inputBucketIdRef.current, metric);
+      } catch {
+        inputBucketIdRef.current = undefined;
+      }
+      if (!cancelled) timeoutId = window.setTimeout(pulse, 60_000);
+    };
 
-  const restoreSimulationSnapshot = useCallback(() => {
-    const snapshot = simulationSnapshotRef.current;
-    simulationSnapshotRef.current = null;
-    setSimulationMode(false);
-    setCameraMetric(null);
-    todayInputsRef.current = snapshot?.inputs ?? null;
-    setTodayInputs(snapshot?.inputs ?? null);
-    setDailySummary(snapshot?.dailySummary ?? null);
-    setWeeklySummary(snapshot?.weeklySummary ?? null);
-  }, []);
-
-  const stopSimulation = useCallback(() => {
-    restoreSimulationSnapshot();
-    setStatus(t(locale, "simulationStopped"));
-  }, [locale, restoreSimulationSnapshot]);
+    void pulse();
+    return () => {
+      cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [appendInputMetric, connected]);
 
   const openPermissions = useCallback(async () => {
     const result = await openAccessibilitySettings();
@@ -696,152 +611,8 @@ export function App() {
     setStatus(result === "opened" ? t(locale, "openedAw") : t(locale, "awFailed"));
   }, [locale]);
 
-  const startCamera = useCallback(async (requireActivityWatch = false): Promise<boolean> => {
-    if (cameraRunning && cameraRef.current) {
-      if (!requireActivityWatch) return true;
-      try {
-        cameraBucketIdRef.current = await aw.ensureCameraBucket("local");
-        setConnected(true);
-        return true;
-      } catch (error) {
-        setConnected(false);
-        const message = error instanceof Error ? `${t(locale, "awFailed")} ${error.message}` : t(locale, "awFailed");
-        setStatus(message);
-        setErrorNotice({ source: "aw", message });
-        return false;
-      }
-    }
-    if (!videoRef.current || cameraStartingRef.current) return false;
-    cameraStartingRef.current = true;
-    setCameraStarting(true);
-    setErrorNotice(null);
-    noFaceSinceRef.current = null;
-    try {
-      if (simulationMode) {
-        restoreSimulationSnapshot();
-      }
-      setStatus(t(locale, "startingCamera"));
-      const source = new CameraMetricSource(settingsRef.current.cameraCalibration);
-      await source.start(videoRef.current);
-      cameraRef.current = source;
-      setCameraRunning(true);
-      try {
-        cameraBucketIdRef.current = await aw.ensureCameraBucket("local");
-        setConnected(true);
-      } catch (error) {
-        cameraBucketIdRef.current = undefined;
-        if (requireActivityWatch) {
-          source.stop();
-          cameraRef.current = null;
-          setCameraRunning(false);
-          setCameraMetric(null);
-          setConnected(false);
-          const message = error instanceof Error ? `${t(locale, "awFailed")} ${error.message}` : t(locale, "awFailed");
-          setStatus(message);
-          setErrorNotice({ source: "aw", message });
-          return false;
-        }
-      }
-
-      const tick = async (): Promise<boolean> => {
-        const activeSource = cameraRef.current;
-        if (!activeSource || !videoRef.current) return false;
-        try {
-          const metric = activeSource.sample(videoRef.current);
-          setCameraMetric(metric);
-          if (calibrationActiveRef.current && metric.present) {
-            calibrationSamplesRef.current = [
-              ...calibrationSamplesRef.current,
-              metric,
-            ].slice(-calibrationSampleTarget);
-            const progress = calibrationSamplesRef.current.length / calibrationSampleTarget;
-            setCalibrationProgress(progress);
-            if (calibrationSamplesRef.current.length >= calibrationSampleTarget) {
-              const calibration = buildCameraCalibration(calibrationSamplesRef.current);
-              if (calibration) {
-                const nextSettings = {
-                  ...settingsRef.current,
-                  cameraCalibration: calibration,
-                };
-                activeSource.setCalibration(calibration);
-                settingsRef.current = nextSettings;
-                setSettings(nextSettings);
-                calibrationActiveRef.current = false;
-                calibrationSamplesRef.current = [];
-                setCalibrationActive(false);
-                setCalibrationProgress(1);
-                setStatus(t(locale, "calibrationComplete"));
-              }
-            }
-          }
-          if (metric.present) {
-            noFaceSinceRef.current = null;
-          } else if (noFaceSinceRef.current === null) {
-            noFaceSinceRef.current = Date.now();
-          }
-          appendLiveCameraMetric(metric);
-          if (cameraBucketIdRef.current) {
-            try {
-              await aw.heartbeatCameraMetric(cameraBucketIdRef.current, metric);
-            } catch {
-              // The local metric remains useful while ActivityWatch reconnects.
-            }
-          }
-        } catch (error) {
-          activeSource.stop();
-          cameraRef.current = null;
-          setCameraRunning(false);
-          setCameraMetric(null);
-          noFaceSinceRef.current = null;
-          if (focusSessionRef.current?.status === "running") {
-            pauseFocusSession();
-          }
-          const message = describeCameraError(error, locale);
-          setStatus(`${t(locale, "cameraFailed")} ${message}`);
-          setErrorNotice({ source: "camera", message });
-          return false;
-        }
-        cameraTickRef.current = window.setTimeout(
-          tick,
-          calibrationActiveRef.current ? 600 : 2_000,
-        );
-        return true;
-      };
-
-      setStatus(t(locale, cameraBucketIdRef.current ? "cameraActive" : "cameraLocalOnly"));
-      return await tick();
-    } catch (error) {
-      setCameraRunning(false);
-      noFaceSinceRef.current = null;
-      const message = describeCameraError(error, locale);
-      setStatus(`${t(locale, "cameraFailed")} ${message}`);
-      setErrorNotice({ source: "camera", message });
-      return false;
-    } finally {
-      cameraStartingRef.current = false;
-      setCameraStarting(false);
-    }
-  }, [appendLiveCameraMetric, cameraRunning, locale, pauseFocusSession, restoreSimulationSnapshot, simulationMode]);
-
-  const stopCamera = useCallback(() => {
-    if (cameraTickRef.current) window.clearTimeout(cameraTickRef.current);
-    cameraTickRef.current = undefined;
-    cameraRef.current?.stop();
-    cameraRef.current = null;
-    cameraBucketIdRef.current = undefined;
-    monitoringReadyRef.current = false;
-    calibrationActiveRef.current = false;
-    calibrationSamplesRef.current = [];
-    setCalibrationActive(false);
-    setCalibrationProgress(0);
-    setCameraRunning(false);
-    setCameraMetric(null);
-    noFaceSinceRef.current = null;
-    setStatus(t(locale, "cameraStopped"));
-  }, [locale]);
-
   const prepareSessionMonitoring = useCallback(async (): Promise<boolean> => {
-    if (simulationMode || sessionStartingRef.current) return false;
+    if (sessionStartingRef.current) return false;
     sessionStartingRef.current = true;
     setSessionStarting(true);
     setErrorNotice(null);
@@ -849,15 +620,13 @@ export function App() {
     try {
       const awReady = await refreshActivityWatch();
       if (!awReady) return false;
-      const cameraReady = await startCamera(true);
-      if (!cameraReady) return false;
       monitoringReadyRef.current = true;
       return true;
     } finally {
       sessionStartingRef.current = false;
       setSessionStarting(false);
     }
-  }, [locale, refreshActivityWatch, simulationMode, startCamera]);
+  }, [locale, refreshActivityWatch]);
 
   const startFocusSession = useCallback(async () => {
     if (!await prepareSessionMonitoring()) return;
@@ -888,48 +657,10 @@ export function App() {
     persistFocusSessionClock(next);
     setFocusSessionClock(next);
     writeSessionBoundary(false);
-    stopCamera();
     setFocusNudge(null);
     nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
     setStatus(t(locale, "sessionEnded"));
-  }, [locale, stopCamera, writeSessionBoundary]);
-
-  const startCalibration = useCallback(() => {
-    if (!cameraRunning || !cameraRef.current) {
-      setStatus(t(locale, "calibrationNeedsCamera"));
-      return;
-    }
-    calibrationSamplesRef.current = [];
-    calibrationActiveRef.current = true;
-    setCalibrationProgress(0);
-    setCalibrationActive(true);
-    setStatus(t(locale, "calibrationStarted"));
-  }, [cameraRunning, locale]);
-
-  const cancelCalibration = useCallback(() => {
-    calibrationActiveRef.current = false;
-    calibrationSamplesRef.current = [];
-    setCalibrationActive(false);
-    setCalibrationProgress(0);
-    setStatus(t(locale, "calibrationCancelled"));
-  }, [locale]);
-
-  const resetCalibration = useCallback(() => {
-    const nextSettings = {
-      ...settingsRef.current,
-      cameraCalibration: undefined,
-    };
-    settingsRef.current = nextSettings;
-    cameraRef.current?.setCalibration(undefined);
-    setSettings(nextSettings);
-    setCalibrationProgress(0);
-    setStatus(t(locale, "calibrationReset"));
-  }, [locale]);
-
-  useEffect(() => () => {
-    if (cameraTickRef.current) window.clearTimeout(cameraTickRef.current);
-    cameraRef.current?.stop();
-  }, []);
+  }, [locale, writeSessionBoundary]);
 
   const applySettingsBundle = useCallback(async (
     nextLocale: Locale,
@@ -937,24 +668,16 @@ export function App() {
     successMessage: string,
   ) => {
     settingsRef.current = nextSettings;
-    calibrationActiveRef.current = false;
-    calibrationSamplesRef.current = [];
-    setCalibrationActive(false);
-    setCalibrationProgress(0);
     setLocale(nextLocale);
     setSettings(nextSettings);
     setAllowedAppsText(nextSettings.allowedApps.join("\n"));
     setDistractingAppsText(nextSettings.distractingApps.join("\n"));
     setAllowedWindowTitlesText(nextSettings.allowedWindowTitles.join("\n"));
     setDistractingWindowTitlesText(nextSettings.distractingWindowTitles.join("\n"));
-    setAttentionThreshold(nextSettings.attentionThreshold);
-    cameraRef.current?.setCalibration(nextSettings.cameraCalibration);
     setFocusNudge(null);
     nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
 
-    if (simulationMode && todayInputsRef.current) {
-      applyInputEvents(todayInputsRef.current, nextSettings);
-    } else if (connected) {
+    if (connected) {
       try {
         applyLoadedSummaries(await loadActivityWatchSummaries(nextSettings));
       } catch {
@@ -973,7 +696,6 @@ export function App() {
     applyLoadedSummaries,
     connected,
     loadActivityWatchSummaries,
-    simulationMode,
   ]);
 
   const exportSettings = useCallback(() => {
@@ -1003,12 +725,7 @@ export function App() {
   }, [applySettingsBundle, locale]);
 
   const clearLocalAggregates = useCallback(() => {
-    if (simulationMode) {
-      simulationSnapshotRef.current = null;
-      setSimulationMode(false);
-      setCameraMetric(null);
-    }
-    localCameraEventsRef.current = [];
+    localInputEventsRef.current = [];
     localSessionEventsRef.current = [];
     todayInputsRef.current = null;
     chartsRef.current.clear();
@@ -1025,7 +742,7 @@ export function App() {
     setClearDataArmed(false);
     saveStoredState({ locale, settings, dailySummary: null, weeklySummary: null });
     setStatus(t(locale, "localDataCleared"));
-  }, [locale, settings, simulationMode]);
+  }, [locale, settings]);
 
   const exportDailyReport = useCallback(async () => {
     if (!dailySummary) {
@@ -1054,182 +771,48 @@ export function App() {
     chartsRef.current.set(handle.filename, handle);
   }, []);
 
+  const handleNudge = useCallback((nudge: FocusNudge | null) => {
+    setFocusNudge(nudge);
+  }, []);
+
   const collectChartAssets = (): ChartAsset[] =>
     Array.from(chartsRef.current.values()).map((handle) => ({
       filename: handle.filename,
       dataUrl: handle.getDataUrl(),
     }));
 
-  const cameraValue = cameraRunning && (!cameraMetric || !cameraMetric.present)
-    ? t(locale, "detecting")
-    : cameraMetric
-      ? `${Math.round(cameraMetric.attention_score * 100)}%`
-      : t(locale, "idle");
-  const cameraStatus = cameraMetric?.present
-    ? t(locale, "facePresent")
-    : cameraRunning
-      ? t(locale, "cameraRunning")
-      : t(locale, "noLiveMetric");
-  const latestRecord = dailySummary?.timeline[dailySummary.timeline.length - 1];
-  const currentRecord = latestRecord && (
-    simulationMode ||
-    isFreshTimestamp(nowMs, latestRecord.minuteStart)
-  )
-    ? latestRecord
-    : undefined;
-  const cameraAwayConfirmed = Boolean(
-    cameraRunning &&
-    cameraMetric &&
-    !cameraMetric.present &&
-    noFaceSinceRef.current !== null &&
-    nowMs - noFaceSinceRef.current >= settings.awaySeconds * 1000
-  );
-  const liveState = currentRecord?.state ?? (
-    cameraMetric?.present
-      ? cameraMetric.attention_score >= settings.attentionThreshold
-        ? "focused"
-        : "distracted"
-      : "away"
-  );
-  const liveStateAvailable = Boolean(
-    currentRecord ||
-    cameraMetric?.present ||
-    cameraAwayConfirmed ||
-    simulationMode
-  );
-  const latestCameraEvent = todayInputs?.cameraEvents[todayInputs.cameraEvents.length - 1];
-  const currentWindowExplanation = currentRecord
-    ? explainWindowScore({
-        timestamp: currentRecord.minuteStart,
-        duration: 60,
-        data: { app: currentRecord.app, title: currentRecord.title },
-      }, settings)
-    : null;
-  const currentAppSignal = currentRecord?.app
-    ? `${currentRecord.app} · ${windowScoreLabel(currentWindowExplanation, locale)}`
-    : t(locale, "noCurrentApp");
-  const currentCameraSignal = cameraMetric?.present
-    ? `${Math.round(cameraMetric.attention_score * 100)}% / ${t(locale, "signalThreshold")} ${Math.round(settings.attentionThreshold * 100)}%`
-    : cameraRunning
-      ? t(locale, "signalNoFace")
-      : t(locale, "noCameraSample");
+  const deferredAppSearch = useDeferredValue(appSearch);
   const filteredApps = useMemo(() => {
-    const query = appSearch.trim().toLocaleLowerCase();
+    const query = deferredAppSearch.trim().toLocaleLowerCase();
     return observedApps.filter((app) => {
       const mode = observedAppMode(app.name, settings);
       return (appFilter === "all" || mode === appFilter) &&
         (!query || app.name.toLocaleLowerCase().includes(query));
     });
-  }, [appFilter, appSearch, observedApps, settings]);
-  const timelineOption = useMemo(
-    () =>
-      dailySummary
-        ? dailyTimelineOption(
-          dailySummary,
-          locale,
-          new Date(),
-          todayInputs?.cameraEvents ?? [],
-          settings.attentionThreshold,
-        )
-        : null,
-    [dailySummary, locale, settings.attentionThreshold, todayInputs?.cameraEvents],
-  );
-
-  useEffect(() => {
-    const evaluation = evaluateNudge(
-      nowMs,
-      simulationMode || !liveStateAvailable ? null : liveState,
-      settings.nudgesEnabled && focusSessionClock.status === "running",
-      isWithinWorkday(
-        new Date(nowMs),
-        settings.workdayStartHour,
-        settings.workdayEndHour,
-      ),
-      settings.distractNudgeSeconds,
-      5 * 60,
-      nudgeTrackerRef.current,
-    );
-    nudgeTrackerRef.current = evaluation.tracker;
-
-    if (liveState !== "distracted" || simulationMode) {
-      setFocusNudge(null);
-      return;
-    }
-    if (!evaluation.shouldNotify) return;
-
-    const nextNudge = {
-      app: currentRecord?.app ?? "",
-      distractedSeconds: evaluation.distractedSeconds,
-    };
-    setFocusNudge(nextNudge);
-    void sendFocusNotification(
-      t(locale, "focusNudgeTitle"),
-      currentRecord?.app
-        ? `${t(locale, "focusNudgeBody")} · ${currentRecord.app}`
-        : t(locale, "focusNudgeBody"),
-    );
-  }, [
-    currentRecord?.app,
-    focusSessionClock.status,
-    liveState,
-    liveStateAvailable,
-    locale,
-    nowMs,
-    settings.distractNudgeSeconds,
-    settings.nudgesEnabled,
-    settings.workdayEndHour,
-    settings.workdayStartHour,
-    simulationMode,
-  ]);
+  }, [appFilter, deferredAppSearch, observedApps, settings]);
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">FC</div>
-          <div>
-          <p className="eyebrow">{t(locale, "appEyebrow")}</p>
-          <h1>{t(locale, "appTitle")}</h1>
-          </div>
-        </div>
-        <div className="topbar-actions">
-          <div className="status-pill" data-connected={connected}>
-            <span className="status-dot" aria-hidden="true" />
-            {connected ? t(locale, "connected") : t(locale, "disconnected")}
-          </div>
-          <button
-            className="settings-menu-button"
-            aria-controls="settings-drawer"
-            aria-expanded={settingsMenuOpen}
-            onClick={() => setSettingsMenuOpen(true)}
-          >
-            {t(locale, "settingsMenu")}
-          </button>
-        </div>
-      </header>
+    <Layout
+      locale={locale}
+      connected={connected}
+      settingsOpen={settingsMenuOpen}
+      onOpenSettings={() => setSettingsMenuOpen(true)}
+    >
+      <MainContent>
 
       {errorNotice ? (
         <section className="error-banner" role="alert">
           <div>
-            <strong>{errorNotice.source === "camera" ? t(locale, "cameraFailed") : t(locale, "awFailed")}</strong>
+            <strong>{t(locale, "awFailed")}</strong>
             <p>{errorNotice.message}</p>
           </div>
           <div className="error-actions">
             <button
-              onClick={() => {
-                if (errorNotice.source === "camera") {
-                  void startCamera();
-                } else {
-                  void refreshActivityWatch();
-                }
-              }}
-              disabled={awBusy || cameraStarting}
+              onClick={() => void refreshActivityWatch()}
+              disabled={awBusy}
             >
               {t(locale, "retry")}
             </button>
-            {errorNotice.source === "camera" ? (
-              <button onClick={openPermissions}>{t(locale, "openPermissions")}</button>
-            ) : null}
             <button onClick={() => setErrorNotice(null)}>{t(locale, "dismiss")}</button>
           </div>
         </section>
@@ -1264,84 +847,23 @@ export function App() {
       ) : null}
 
       <section className="workspace-hero">
-        <div className="live-state-card" data-state={liveStateAvailable ? liveState : "idle"}>
-          <div className="live-state-topline">
-            <span className="live-indicator" aria-hidden="true" />
-            <span>{simulationMode ? t(locale, "simulationMode") : t(locale, "currentState")}</span>
-          </div>
-          <strong>
-            {liveStateAvailable ? t(locale, liveState) : t(locale, "waitingForData")}
-          </strong>
-          <p>{liveStateReason(
-            liveStateAvailable ? liveState : null,
-            currentRecord,
-            cameraMetric,
-            settings,
-            locale,
-            cameraRunning,
-          )}</p>
-          <div className="live-context">
-            <span>{t(locale, "signalApp")} <b>{currentAppSignal}</b></span>
-            <span>{t(locale, "signalCamera")} <b>{currentCameraSignal}</b></span>
-            <span>{latestCameraEvent ? formatSampleAge(latestCameraEvent.timestamp, nowMs, locale) : t(locale, "noCameraSample")}</span>
-          </div>
-        </div>
-
-        <div className="quick-start panel">
-          <div>
-            <p className="section-kicker">{t(locale, "quickStart")}</p>
-            <h2>
-              {focusSessionClock.status === "running"
-                ? t(locale, "sessionRunningTitle")
-                : focusSessionClock.status === "paused"
-                  ? t(locale, "sessionPausedTitle")
-                  : t(locale, "readyToFocus")}
-            </h2>
-            <p>
-              {focusSessionClock.status === "running"
-                ? t(locale, "sessionRunningHelp")
-                : focusSessionClock.status === "paused"
-                  ? t(locale, "sessionPausedHelp")
-                  : t(locale, "readyToFocusHelp")}
-            </p>
-          </div>
-          <div className="session-clock" data-status={focusSessionClock.status}>
-            <span>{t(locale, "currentSession")}</span>
-            <strong>{formatDuration(focusSessionClock.elapsedMs)}</strong>
-            <small>
-              {focusSessionClock.status === "idle" && focusSessionClock.elapsedMs > 0
-                ? t(locale, "sessionStatusFinished")
-                : t(locale, `sessionStatus${capitalize(focusSessionClock.status)}` as
-                  | "sessionStatusIdle"
-                  | "sessionStatusRunning"
-                  | "sessionStatusPaused")}
-            </small>
-          </div>
-          <div className="primary-actions">
-            {focusSessionClock.status === "idle" ? (
-              <button
-                className="button-primary"
-                onClick={startFocusSession}
-                disabled={simulationMode || sessionStarting}
-              >
-                {sessionStarting ? t(locale, "sessionPreparingShort") : t(locale, "startSession")}
-              </button>
-            ) : null}
-            {focusSessionClock.status === "running" ? (
-              <button className="button-primary" onClick={pauseFocusSession}>
-                {t(locale, "pauseSession")}
-              </button>
-            ) : null}
-            {focusSessionClock.status === "paused" ? (
-              <button className="button-primary" onClick={resumeFocusSession} disabled={sessionStarting}>
-                {sessionStarting ? t(locale, "sessionPreparingShort") : t(locale, "resumeSession")}
-              </button>
-            ) : null}
-            {focusSessionClock.status !== "idle" ? (
-              <button onClick={endFocusSession}>{t(locale, "endSession")}</button>
-            ) : null}
-          </div>
-        </div>
+        <LiveStatus
+          locale={locale}
+          settings={settings}
+          dailySummary={dailySummary}
+          sessionRunning={focusSessionClock.status === "running"}
+          nudgeTrackerRef={nudgeTrackerRef}
+          onNudge={handleNudge}
+        />
+        <QuickStart
+          locale={locale}
+          clock={focusSessionClock}
+          sessionStarting={sessionStarting}
+          onStart={startFocusSession}
+          onPause={pauseFocusSession}
+          onResume={resumeFocusSession}
+          onEnd={endFocusSession}
+        />
       </section>
 
       <section className="dashboard-grid">
@@ -1358,35 +880,32 @@ export function App() {
         <div className="panel metric-panel">
           <p className="label">{t(locale, "distracted")}</p>
           <strong>{dailySummary ? `${dailySummary.distractedMinutes}m` : "--"}</strong>
-          <span>{dailySummary ? `${t(locale, "away")} ${dailySummary.awayMinutes}m` : t(locale, "emptyTitle")}</span>
+          <span>
+            {dailySummary
+              ? `${t(locale, "away")} ${dailySummary.awayMinutes}m`
+              : t(locale, "emptyTitle")}
+          </span>
         </div>
         <div className="panel metric-panel">
-          <p className="label">{t(locale, "attentionNow")}</p>
-          <strong>{cameraValue}</strong>
-          <span>{cameraStatus}</span>
+          <p className="label">{t(locale, "inputActivity")}</p>
+          <InputActivityMetric locale={locale} />
         </div>
         <div className="panel metric-panel">
           <p className="label">{t(locale, "todaySessionTotal")}</p>
-          <strong>{formatDuration(focusSessionTotalMs(focusSessionClock))}</strong>
+          <strong><SessionTotal clock={focusSessionClock} /></strong>
           <span>{t(locale, "todaySessionTotalHelp")}</span>
         </div>
       </section>
 
       {dailySummary && weeklySummary ? (
         <section className="charts-grid">
-          <ChartPanel
+          <TimelineChartPanel
             title={t(locale, "dailyTimeline")}
             filename={`${dailySummary.date}-timeline.png`}
-            option={timelineOption!}
+            summary={dailySummary}
+            locale={locale}
             onReady={registerChart}
             loadingLabel={t(locale, "chartLoading")}
-            live={{
-              endTime: nowMs,
-              windowMs: 60 * 60 * 1000,
-              followingLabel: t(locale, "timelineFollowing"),
-              pausedLabel: t(locale, "timelinePaused"),
-              resumeLabel: t(locale, "timelineResume"),
-            }}
           />
           <DailyBreakdownChart
             summary={dailySummary}
@@ -1415,22 +934,13 @@ export function App() {
         <span className="footer-status-dot" aria-hidden="true" />
         {status}
       </footer>
+      </MainContent>
 
-      <div
-        className="settings-overlay"
-        data-open={settingsMenuOpen}
-        aria-hidden={!settingsMenuOpen}
-        onMouseDown={(event) => {
-          if (event.currentTarget === event.target) setSettingsMenuOpen(false);
-        }}
+      <Sidebar
+        open={settingsMenuOpen}
+        labelledBy="settings-drawer-title"
+        onClose={() => setSettingsMenuOpen(false)}
       >
-        <aside
-          id="settings-drawer"
-          className="settings-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="settings-drawer-title"
-        >
           <div className="settings-drawer-header">
             <div>
               <p className="section-kicker">{t(locale, "settingsMenu")}</p>
@@ -1461,25 +971,11 @@ export function App() {
               </div>
               <div className="monitoring-status-row">
                 <span data-ready={connected}>{t(locale, connected ? "connected" : "disconnected")}</span>
-                <span data-ready={cameraRunning}>
-                  {t(locale, "camera")} · {t(locale, cameraRunning ? "cameraRunning" : "idle")}
-                </span>
+                <span data-ready>{t(locale, "inputMonitoring")} · {t(locale, "active")}</span>
               </div>
               <div className="settings-tool-actions">
                 <button onClick={() => void refreshActivityWatch()} disabled={awBusy}>
                   {awBusy ? t(locale, "loadingAw") : t(locale, "reconnectAw")}
-                </button>
-                <button
-                  onClick={() => void startCamera()}
-                  disabled={cameraRunning || cameraStarting}
-                >
-                  {cameraStarting ? t(locale, "startingCameraShort") : t(locale, "startCamera")}
-                </button>
-                <button
-                  onClick={stopCamera}
-                  disabled={!cameraRunning || focusSessionClock.status === "running"}
-                >
-                  {t(locale, "stopCamera")}
                 </button>
               </div>
             </section>
@@ -1490,17 +986,6 @@ export function App() {
                 <span>{t(locale, "toolsHelp")}</span>
               </div>
               <div className="settings-tool-actions">
-                <button
-                  onClick={startSimulation}
-                  disabled={
-                    simulationMode ||
-                    cameraStarting ||
-                    focusSessionClock.status !== "idle"
-                  }
-                >
-                  {t(locale, "startSimulation")}
-                </button>
-                {simulationMode ? <button onClick={stopSimulation}>{t(locale, "stopSimulation")}</button> : null}
                 <button onClick={exportDailyReport} disabled={!dailySummary}>{t(locale, "exportDailyShort")}</button>
                 <button onClick={exportWeeklyReport} disabled={!weeklySummary}>{t(locale, "exportWeeklyShort")}</button>
               </div>
@@ -1518,30 +1003,6 @@ export function App() {
           </summary>
           <div className="disclosure-content rules-panel">
             <p>{t(locale, "criteriaBody")}</p>
-            <div className="slider-grid">
-              <label className="threshold-control">
-                <span>{t(locale, "thresholdLabel")} <b>{Math.round(attentionThreshold * 100)}%</b></span>
-                <input
-                  type="range"
-                  min="0.3"
-                  max="0.95"
-                  step="0.01"
-                  value={attentionThreshold}
-                  onChange={(event) => updateAttentionThreshold(Number(event.target.value))}
-                />
-              </label>
-              <label className="threshold-control">
-                <span>{t(locale, "awayDelayLabel")} <b>{settings.awaySeconds}s</b></span>
-                <input
-                  type="range"
-                  min="5"
-                  max="120"
-                  step="5"
-                  value={settings.awaySeconds}
-                  onChange={(event) => updateAwaySeconds(Number(event.target.value))}
-                />
-              </label>
-            </div>
             <div className="nudge-settings">
               <div className="nudge-settings-heading">
                 <div>
@@ -1648,7 +1109,7 @@ export function App() {
                 />
               </label>
               <div className="filter-pills" role="group" aria-label={t(locale, "filterApps")}>
-                {(["all", "focus", "neutral", "distract"] as const).map((filter) => (
+                {(["all", "focus", "distract"] as const).map((filter) => (
                   <button
                     key={filter}
                     data-active={appFilter === filter}
@@ -1657,7 +1118,6 @@ export function App() {
                     {t(locale, `appFilter${filter[0].toUpperCase()}${filter.slice(1)}` as
                       | "appFilterAll"
                       | "appFilterFocus"
-                      | "appFilterNeutral"
                       | "appFilterDistract")}
                   </button>
                 ))}
@@ -1680,7 +1140,6 @@ export function App() {
                         </div>
                         <div className="app-mode-control">
                           <button data-active={mode === "focus"} onClick={() => setObservedAppMode(app.name, "focus")}>{t(locale, "appModeFocus")}</button>
-                          <button data-active={mode === "neutral"} onClick={() => setObservedAppMode(app.name, "neutral")}>{t(locale, "appModeNeutral")}</button>
                           <button data-active={mode === "distract"} onClick={() => setObservedAppMode(app.name, "distract")}>{t(locale, "appModeDistract")}</button>
                         </div>
                       </div>
@@ -1689,85 +1148,6 @@ export function App() {
                 </div>
               </>
             ) : <p className="aw-apps-empty">{t(locale, "awAppsEmpty")}</p>}
-          </div>
-            </details>
-
-            <details className="panel disclosure-panel camera-disclosure">
-          <summary>
-            <div>
-              <span className="summary-icon" aria-hidden="true">◉</span>
-              <div><strong>{t(locale, "cameraPreview")}</strong><small>{t(locale, "cameraDiagnostics")}</small></div>
-            </div>
-            <span className="disclosure-chevron" aria-hidden="true">⌄</span>
-          </summary>
-          <div className="disclosure-content camera-panel">
-            <div className="camera-diagnostics">
-              <div><span>{t(locale, "faceDetection")}</span><strong>{cameraMetric?.present ? t(locale, "detected") : t(locale, "notDetected")}</strong></div>
-              <div><span>{t(locale, "confidence")}</span><strong>{cameraMetric ? `${Math.round(cameraMetric.confidence * 100)}%` : "--"}</strong></div>
-              <div>
-                <span>{t(locale, "gazeStatus")}</span>
-                <strong>
-                  {cameraMetric?.present
-                    ? cameraMetric.looking_away
-                      ? t(locale, "lookingAway")
-                      : t(locale, "lookingForward")
-                    : "--"}
-                </strong>
-              </div>
-              <p>{t(locale, "cameraPrivacy")}</p>
-            </div>
-            <div className="camera-calibration">
-              <div className="calibration-heading">
-                <div>
-                  <strong>{t(locale, "calibrationTitle")}</strong>
-                  <span>
-                    {calibrationActive
-                      ? `${t(locale, "calibrationProgress")} ${Math.round(calibrationProgress * 100)}%`
-                      : settings.cameraCalibration
-                      ? `${t(locale, "calibrationReady")} · ${formatCalibrationDate(settings.cameraCalibration.calibratedAt, locale)}`
-                      : t(locale, "calibrationNotSet")}
-                  </span>
-                </div>
-                <span className="calibration-badge" data-ready={Boolean(settings.cameraCalibration)}>
-                  {settings.cameraCalibration ? t(locale, "calibrated") : t(locale, "notCalibrated")}
-                </span>
-              </div>
-              <p>{t(locale, "calibrationBody")}</p>
-              {calibrationActive ? (
-                <div
-                  className="calibration-progress"
-                  role="progressbar"
-                  aria-label={t(locale, "calibrationProgress")}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(calibrationProgress * 100)}
-                >
-                  <span style={{ width: `${Math.round(calibrationProgress * 100)}%` }} />
-                </div>
-              ) : null}
-              <div className="calibration-actions">
-                {calibrationActive ? (
-                  <button onClick={cancelCalibration}>{t(locale, "cancelCalibration")}</button>
-                ) : (
-                  <button
-                    className="button-primary"
-                    onClick={startCalibration}
-                    disabled={!cameraRunning}
-                  >
-                    {!cameraRunning
-                      ? t(locale, "startCameraFirst")
-                      : settings.cameraCalibration
-                      ? t(locale, "recalibrate")
-                      : t(locale, "startCalibration")}
-                  </button>
-                )}
-                {settings.cameraCalibration && !calibrationActive ? (
-                  <button onClick={resetCalibration}>{t(locale, "resetCalibration")}</button>
-                ) : null}
-              </div>
-              <p className="calibration-limit">{t(locale, "calibrationLimit")}</p>
-            </div>
-            <video ref={videoRef} muted playsInline />
           </div>
             </details>
 
@@ -1860,7 +1240,7 @@ export function App() {
           <div className="disclosure-content intro-panel">
             <p>{t(locale, "introBody")}</p>
             <ul>
-              <li>{t(locale, "introFeatureCamera")}</li>
+              <li>{t(locale, "introFeatureInput")}</li>
               <li>{t(locale, "introFeatureActivity")}</li>
               <li>{t(locale, "introFeatureReports")}</li>
               <li>{t(locale, "introPrivacy")}</li>
@@ -1873,9 +1253,8 @@ export function App() {
           </div>
             </details>
           </section>
-        </aside>
-      </div>
-    </main>
+      </Sidebar>
+    </Layout>
   );
 }
 
@@ -1891,12 +1270,12 @@ async function loadWeeklySummaries(settings: FocusSettings): Promise<DailySummar
     days.map(async (date) => {
       const start = new Date(`${date}T00:00:00.000`);
       const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-      const [windowEvents, cameraEvents, sessionEvents] = await Promise.all([
+      const [windowEvents, inputEvents, sessionEvents] = await Promise.all([
         windowBucketId ? aw.getEvents<WindowEventData>(windowBucketId, start, end) : Promise.resolve([]),
-        aw.getEvents<CameraMetric>(`focus-camera_local`, start, end).catch(() => []),
+        aw.getEvents<InputMetric>(`focus-input_local`, start, end).catch(() => []),
         aw.getEvents<FocusSessionData>(`focus-companion-session_local`, start, end).catch(() => []),
       ]);
-      return aggregateDailyFocus(date, windowEvents, cameraEvents, settings, sessionEvents);
+      return aggregateDailyFocus(date, windowEvents, inputEvents, settings, sessionEvents);
     }),
   );
 
@@ -1940,7 +1319,7 @@ function summarizeObservedApps(
 function observedAppMode(
   app: string,
   settings: FocusSettings,
-): "focus" | "neutral" | "distract" {
+): "focus" | "distract" {
   const normalized = app.toLocaleLowerCase();
   if (settings.distractingApps.some((value) => value.toLocaleLowerCase() === normalized)) {
     return "distract";
@@ -1948,71 +1327,12 @@ function observedAppMode(
   if (settings.allowedApps.some((value) => value.toLocaleLowerCase() === normalized)) {
     return "focus";
   }
-  return "neutral";
-}
-
-function appModeLabel(
-  mode: "focus" | "neutral" | "distract",
-  locale: Locale,
-): string {
-  if (mode === "focus") return t(locale, "appModeFocus");
-  if (mode === "distract") return t(locale, "appModeDistract");
-  return t(locale, "appModeNeutral");
-}
-
-function windowScoreLabel(
-  explanation: ReturnType<typeof explainWindowScore> | null,
-  locale: Locale,
-): string {
-  if (!explanation) return t(locale, "appModeNeutral");
-  if (explanation.source === "allowed-window") return t(locale, "matchedAllowedWindow");
-  if (explanation.source === "distracting-window") return t(locale, "matchedDistractingWindow");
-  if (explanation.score === "focus") return t(locale, "appModeFocus");
-  if (explanation.score === "distract") return t(locale, "appModeDistract");
-  return t(locale, "appModeNeutral");
+  return "focus";
 }
 
 function formatAppDuration(seconds: number, locale: Locale): string {
   const minutes = Math.max(1, Math.round(seconds / 60));
   return locale === "zh" ? `今日 ${minutes} 分钟` : `${minutes} min today`;
-}
-
-function formatCalibrationDate(timestamp: string, locale: Locale): string {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return "";
-  return date.toLocaleString(locale === "zh" ? "zh-CN" : "en", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatSampleAge(timestamp: string, nowMs: number, locale: Locale): string {
-  const seconds = Math.max(0, Math.round((nowMs - new Date(timestamp).getTime()) / 1000));
-  if (seconds < 5) return locale === "zh" ? "刚刚更新" : "Updated just now";
-  if (seconds < 60) return locale === "zh" ? `${seconds} 秒前更新` : `Updated ${seconds}s ago`;
-  const minutes = Math.round(seconds / 60);
-  return locale === "zh" ? `${minutes} 分钟前更新` : `Updated ${minutes}m ago`;
-}
-
-function liveStateReason(
-  state: "focused" | "distracted" | "away" | null,
-  record: DailySummary["timeline"][number] | undefined,
-  metric: CameraMetric | null,
-  settings: FocusSettings,
-  locale: Locale,
-  cameraRunning: boolean,
-): string {
-  if (!state) return t(locale, cameraRunning ? "reasonDetectingFace" : "reasonWaiting");
-  if (state === "away") return t(locale, "reasonAway");
-  if (state === "focused") {
-    return record?.app ? t(locale, "reasonFocusedApp") : t(locale, "reasonFocusedCamera");
-  }
-  if (metric?.present && metric.attention_score < settings.attentionThreshold) {
-    return t(locale, "reasonDistractedAttention");
-  }
-  return t(locale, "reasonDistractedApp");
 }
 
 function mergeEvents<TData>(
@@ -2058,18 +1378,6 @@ function mergeTodayIntoWeekly(
     return label === today.date ? today : summarizeTimeline(label, []);
   });
   return buildWeeklySummary(`${days[0].date} - ${days[6].date}`, days);
-}
-
-function formatDuration(durationMs: number): string {
-  const totalSeconds = Math.floor(durationMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
-}
-
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function formatShortDuration(seconds: number, locale: Locale): string {

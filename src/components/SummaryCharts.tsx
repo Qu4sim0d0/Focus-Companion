@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { memo, useEffect, useMemo, useRef, type RefObject } from "react";
 import type { DailySummary, FocusState, WeeklySummary } from "../types";
 import { t, type Locale } from "../i18n";
 import type { ChartPanelHandle } from "./ChartPanel";
@@ -15,7 +15,7 @@ interface SummaryChartProps {
   onReady?: (handle: ChartPanelHandle) => void;
 }
 
-export function DailyBreakdownChart({
+export const DailyBreakdownChart = memo(function DailyBreakdownChart({
   summary,
   filename,
   locale,
@@ -85,9 +85,14 @@ export function DailyBreakdownChart({
       </div>
     </section>
   );
-}
+}, (previous, next) =>
+  previous.filename === next.filename &&
+  previous.locale === next.locale &&
+  previous.onReady === next.onReady &&
+  sameDailyTotals(previous.summary, next.summary)
+);
 
-export function WeeklyTrendChart({
+export const WeeklyTrendChart = memo(function WeeklyTrendChart({
   summary,
   filename,
   locale,
@@ -154,7 +159,7 @@ export function WeeklyTrendChart({
                   ))}
                 </g>
               ))}
-              <g transform="translate(148 302)">
+              <g transform="translate(58 302)">
                 {model.series.map((series, index) => (
                   <g key={series.state} transform={`translate(${index * 112} 0)`}>
                     <line x1="0" x2="18" y1="0" y2="0" stroke={colors[series.state]} strokeWidth="3" />
@@ -168,7 +173,16 @@ export function WeeklyTrendChart({
       </div>
     </section>
   );
-}
+}, (previous, next) =>
+  previous.filename === next.filename &&
+  previous.locale === next.locale &&
+  previous.onReady === next.onReady &&
+  previous.summary.weekLabel === next.summary.weekLabel &&
+  previous.summary.days.length === next.summary.days.length &&
+  previous.summary.days.every((day, index) =>
+    sameDailyTotals(day, next.summary.days[index]),
+  )
+);
 
 export interface DonutSegment {
   state: FocusState;
@@ -264,4 +278,12 @@ function svgDataUrl(svg: SVGSVGElement | null): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return `data:image/svg+xml;base64,${btoa(binary)}`;
+}
+
+function sameDailyTotals(left: DailySummary, right: DailySummary): boolean {
+  return left.date === right.date &&
+    left.totalMinutes === right.totalMinutes &&
+    left.focusedMinutes === right.focusedMinutes &&
+    left.distractedMinutes === right.distractedMinutes &&
+    left.awayMinutes === right.awayMinutes;
 }

@@ -11,8 +11,8 @@ describe("report generation", () => {
         app: "Code",
         title: "App.tsx",
         state: "focused",
-        attentionScore: 0.82,
-        present: true,
+        activityScore: 1,
+        inputActive: true,
       },
     ];
     const markdown = buildDailyMarkdown(summarizeTimeline("2026-06-14", timeline), [
@@ -26,6 +26,6 @@ describe("report generation", () => {
       minute: "2-digit",
       hour12: false,
     });
-    expect(markdown).toContain(`| ${localTime} | focused | Code | App.tsx | 0.82 |`);
+    expect(markdown).toContain(`| ${localTime} | focused | Code | App.tsx | 1.00 |`);
   });
 });

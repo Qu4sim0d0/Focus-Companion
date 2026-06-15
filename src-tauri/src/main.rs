@@ -6,6 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::Manager;
 
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventSourceSecondsSinceLastEventType(state_id: i32, event_type: u32) -> f64;
+}
+
 #[derive(Debug, Deserialize)]
 struct ReportAsset {
     filename: String,
@@ -69,6 +75,26 @@ fn open_accessibility_settings() -> Result<&'static str, String> {
         Ok("opened")
     } else {
         Ok("failed")
+    }
+}
+
+#[tauri::command]
+fn get_system_idle_seconds() -> Result<f64, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let seconds = unsafe {
+            CGEventSourceSecondsSinceLastEventType(0, u32::MAX)
+        };
+        if seconds.is_finite() && seconds >= 0.0 {
+            Ok(seconds)
+        } else {
+            Err("System input idle time is unavailable".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("System input monitoring is currently supported on macOS only".to_string())
     }
 }
 
@@ -139,6 +165,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_activitywatch_window,
             open_accessibility_settings,
+            get_system_idle_seconds,
             save_report,
             show_notification,
             start_activitywatch

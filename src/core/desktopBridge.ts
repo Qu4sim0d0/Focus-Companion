@@ -40,6 +40,17 @@ export async function openAccessibilitySettings(): Promise<"opened" | "browser-m
   return status === "opened" ? "opened" : status === "failed" ? "failed" : "browser-mode";
 }
 
+export async function getSystemIdleSeconds(): Promise<number | null> {
+  if (!("__TAURI_INTERNALS__" in window)) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const seconds = await invoke<number>("get_system_idle_seconds");
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function requestFocusNotificationPermission(): Promise<boolean> {
   if ("__TAURI_INTERNALS__" in window) return true;
   if (!("Notification" in window)) return false;
