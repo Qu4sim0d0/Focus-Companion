@@ -8,14 +8,14 @@ describe("native summary charts", () => {
       ...summarizeTimeline("2026-06-15", []),
       totalMinutes: 10,
       focusedMinutes: 6,
-      distractedMinutes: 3,
-      awayMinutes: 1,
+      distractedMinutes: 4,
+      awayMinutes: 0,
     };
     const segments = buildDonutSegments(summary);
 
-    expect(segments.map((segment) => segment.ratio)).toEqual([0.6, 0.3, 0.1]);
-    expect(segments[2].offset + segments[2].length).toBeCloseTo(
-      segments[2].circumference,
+    expect(segments.map((segment) => segment.ratio)).toEqual([0.6, 0.4]);
+    expect(segments[1].offset + segments[1].length).toBeCloseTo(
+      segments[1].circumference,
     );
   });
 
@@ -30,8 +30,8 @@ describe("native summary charts", () => {
       ...empty,
       totalMinutes: 12,
       focusedMinutes: 8,
-      distractedMinutes: 3,
-      awayMinutes: 1,
+      distractedMinutes: 4,
+      awayMinutes: 0,
     };
     const model = buildWeeklyChartModel({
       weekLabel: "active",

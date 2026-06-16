@@ -2,7 +2,6 @@ import { memo, useEffect, useMemo, type MutableRefObject } from "react";
 import { sendFocusNotification } from "../core/desktopBridge";
 import {
   explainWindowScore,
-  inputIdleThresholdSeconds,
   type WindowScoreExplanation,
 } from "../core/focus";
 import { useInputActivity } from "../core/inputActivity";
@@ -45,6 +44,9 @@ export const LiveStatus = memo(function LiveStatus({
   const nowMs = useTime();
   const input = useInputActivity();
   const model = useMemo(() => {
+    const inputActive = input.available
+      ? input.idleSeconds < settings.inputIdleThresholdSeconds
+      : true;
     const latestRecord = dailySummary?.timeline[dailySummary.timeline.length - 1];
     const currentRecord = latestRecord && isFreshTimestamp(nowMs, latestRecord.minuteStart)
       ? latestRecord
@@ -59,7 +61,7 @@ export const LiveStatus = memo(function LiveStatus({
     const windowExplanation = currentRecord
       ? explainWindowScore(liveWindowEvent, settings)
       : null;
-    const state: FocusState = input.available && !input.active
+    const state: FocusState = input.available && !inputActive
       ? "distracted"
       : currentRecord?.state === "distracted"
         ? "distracted"
@@ -68,11 +70,12 @@ export const LiveStatus = memo(function LiveStatus({
     return {
       currentRecord,
       state,
+      inputActive,
       appSignal: currentRecord?.app
         ? `${currentRecord.app} · ${windowScoreLabel(windowExplanation, locale)}`
         : t(locale, "noCurrentApp"),
     };
-  }, [dailySummary, input.active, locale, nowMs, settings]);
+  }, [dailySummary, input.available, input.idleSeconds, locale, nowMs, settings]);
 
   useEffect(() => {
     const previousTracker = nudgeTrackerRef.current;
@@ -132,7 +135,7 @@ export const LiveStatus = memo(function LiveStatus({
       <p>
         {!input.available
           ? t(locale, "reasonInputUnavailable")
-          : !input.active
+          : !model.inputActive
           ? t(locale, "reasonInputIdle")
           : model.state === "distracted"
             ? t(locale, "reasonDistractedApp")
@@ -145,12 +148,12 @@ export const LiveStatus = memo(function LiveStatus({
           <b>
             {!input.available
               ? t(locale, "inputUnavailable")
-              : input.active
+              : model.inputActive
                 ? t(locale, "active")
                 : t(locale, "inputIdle")}
           </b>
         </span>
-        <span>{formatIdleDuration(input.idleSeconds, locale)}</span>
+        <span>{formatIdleDuration(input.idleSeconds, settings.inputIdleThresholdSeconds, locale)}</span>
         <span>{t(locale, input.scope === "system" ? "inputScopeSystem" : "inputScopeWindow")}</span>
       </div>
     </section>
@@ -159,22 +162,25 @@ export const LiveStatus = memo(function LiveStatus({
 
 export const InputActivityMetric = memo(function InputActivityMetric({
   locale,
+  thresholdSeconds,
 }: {
   locale: Locale;
+  thresholdSeconds: number;
 }) {
   const input = useInputActivity();
+  const active = input.available ? input.idleSeconds < thresholdSeconds : true;
   return (
     <>
       <strong>
         {!input.available
           ? t(locale, "inputUnavailable")
-          : input.active
+          : active
             ? t(locale, "active")
             : t(locale, "inputIdle")}
       </strong>
       <span>
         {input.available
-          ? `${formatIdleDuration(input.idleSeconds, locale)} · ${
+          ? `${formatIdleDuration(input.idleSeconds, thresholdSeconds, locale)} · ${
               t(locale, input.scope === "system" ? "inputScopeSystem" : "inputScopeWindow")
             }`
           : t(locale, "inputUnavailableHelp")}
@@ -213,9 +219,9 @@ function windowScoreLabel(
     : t(locale, "appModeFocus");
 }
 
-function formatIdleDuration(seconds: number, locale: Locale): string {
+function formatIdleDuration(seconds: number, thresholdSeconds: number, locale: Locale): string {
   const rounded = Math.max(0, Math.floor(seconds));
-  if (rounded < inputIdleThresholdSeconds) {
+  if (rounded < thresholdSeconds) {
     return locale === "zh"
       ? `${rounded} 秒前有输入`
       : `Input ${rounded}s ago`;

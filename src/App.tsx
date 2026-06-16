@@ -419,6 +419,19 @@ export function App() {
     setFocusNudge(null);
   }, []);
 
+  const updateInputIdleThreshold = useCallback((seconds: number) => {
+    const nextSeconds = Math.max(30, Math.min(1_800, Math.round(seconds)));
+    setSettings((current) => ({ ...current, inputIdleThresholdSeconds: nextSeconds }));
+    nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
+    setFocusNudge(null);
+    if (todayInputsRef.current) {
+      applyInputEvents(
+        todayInputsRef.current,
+        { ...settingsRef.current, inputIdleThresholdSeconds: nextSeconds },
+      );
+    }
+  }, [applyInputEvents]);
+
   const updateWorkdayHour = useCallback((
     field: "workdayStartHour" | "workdayEndHour",
     hour: number,
@@ -626,7 +639,7 @@ export function App() {
       }
       const metric: InputMetric = {
         idleSeconds: Math.round(snapshot.idleSeconds),
-        active: snapshot.active,
+        active: snapshot.idleSeconds < settingsRef.current.inputIdleThresholdSeconds,
       };
       appendInputMetric(metric);
       try {
@@ -935,15 +948,11 @@ export function App() {
         <div className="panel metric-panel">
           <p className="label">{t(locale, "distracted")}</p>
           <strong>{dailySummary ? `${dailySummary.distractedMinutes}m` : "--"}</strong>
-          <span>
-            {dailySummary
-              ? `${t(locale, "away")} ${dailySummary.awayMinutes}m`
-              : t(locale, "emptyTitle")}
-          </span>
+          <span>{dailySummary ? t(locale, "distractedHelp") : t(locale, "emptyTitle")}</span>
         </div>
         <div className="panel metric-panel">
           <p className="label">{t(locale, "inputActivity")}</p>
-          <InputActivityMetric locale={locale} />
+          <InputActivityMetric locale={locale} thresholdSeconds={settings.inputIdleThresholdSeconds} />
         </div>
         <div className="panel metric-panel">
           <p className="label">{t(locale, "todaySessionTotal")}</p>
@@ -1075,6 +1084,20 @@ export function App() {
                 </label>
               </div>
               <div className="nudge-controls">
+                <label className="threshold-control">
+                  <span>
+                    {t(locale, "inputIdleThresholdLabel")} <b>{formatShortDuration(settings.inputIdleThresholdSeconds, locale)}</b>
+                  </span>
+                  <input
+                    type="range"
+                    min="30"
+                    max="1800"
+                    step="30"
+                    value={settings.inputIdleThresholdSeconds}
+                    onChange={(event) => updateInputIdleThreshold(Number(event.target.value))}
+                  />
+                  <small>{t(locale, "inputIdleThresholdHelp")}</small>
+                </label>
                 <label className="threshold-control">
                   <span>
                     {t(locale, "nudgeDelayLabel")} <b>{formatShortDuration(settings.distractNudgeSeconds, locale)}</b>

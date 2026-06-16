@@ -13,7 +13,6 @@
   --primary-dark: #087f65;
   --focus: #16a36a;
   --distracted: #e8872e;
-  --away: #64748b;
 }
 
 * {
@@ -348,10 +347,6 @@ h2 {
 
 .live-state-card[data-state="distracted"] {
   border-left-color: var(--distracted);
-}
-
-.live-state-card[data-state="away"] {
-  border-left-color: var(--away);
 }
 
 .live-state-card[data-state="idle"] {

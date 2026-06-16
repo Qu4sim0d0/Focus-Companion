@@ -12,7 +12,6 @@ export function buildDailyMarkdown(summary: DailySummary, chartAssets: ChartAsse
     "",
     metricLine("Focused", summary.focusedMinutes),
     metricLine("Distracted", summary.distractedMinutes),
-    metricLine("Away", summary.awayMinutes),
     `- Focus ratio: ${(summary.focusRatio * 100).toFixed(1)}%`,
     `- Longest focus run: ${summary.longestFocusRunMinutes} minutes`,
     "",
@@ -38,10 +37,10 @@ export function buildWeeklyMarkdown(summary: WeeklySummary, chartAssets: ChartAs
     lines.push(`![${asset.filename}](assets/${asset.filename})`, "");
   }
 
-  lines.push("| Date | Focused | Distracted | Away | Focus ratio |", "| --- | ---: | ---: | ---: | ---: |");
+  lines.push("| Date | Focused | Distracted | Focus ratio |", "| --- | ---: | ---: | ---: |");
   for (const day of summary.days) {
     lines.push(
-      `| ${day.date} | ${day.focusedMinutes}m | ${day.distractedMinutes}m | ${day.awayMinutes}m | ${(day.focusRatio * 100).toFixed(1)}% |`,
+      `| ${day.date} | ${day.focusedMinutes}m | ${day.distractedMinutes}m | ${(day.focusRatio * 100).toFixed(1)}% |`,
     );
   }
 

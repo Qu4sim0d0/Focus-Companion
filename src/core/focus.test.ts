@@ -5,7 +5,6 @@ import {
   classifyMinute,
   defaultSettings,
   explainWindowScore,
-  inputIdleThresholdSeconds,
   scoreWindow,
   summarizeTimeline,
 } from "./focus";
@@ -21,7 +20,7 @@ describe("focus aggregation", () => {
   it("keeps 59 seconds without input focused", () => {
     expect(classifyMinute(
       windowEvent("Code", "focus.ts"),
-      { idleSeconds: inputIdleThresholdSeconds - 1, active: true },
+      { idleSeconds: defaultSettings.inputIdleThresholdSeconds - 1, active: true },
       defaultSettings,
     )).toBe("focused");
   });
@@ -29,7 +28,7 @@ describe("focus aggregation", () => {
   it("marks 60 seconds without input distracted", () => {
     expect(classifyMinute(
       windowEvent("Code", "focus.ts"),
-      { idleSeconds: inputIdleThresholdSeconds, active: false },
+      { idleSeconds: defaultSettings.inputIdleThresholdSeconds, active: false },
       defaultSettings,
     )).toBe("distracted");
   });
@@ -50,8 +49,8 @@ describe("focus aggregation", () => {
     )).toBe("distracted");
   });
 
-  it("uses away only when neither window nor input data exists", () => {
-    expect(classifyMinute(undefined, undefined, defaultSettings)).toBe("away");
+  it("merges missing observations into distracted time", () => {
+    expect(classifyMinute(undefined, undefined, defaultSettings)).toBe("distracted");
     expect(classifyMinute(
       undefined,
       { idleSeconds: 4, active: true },
@@ -59,10 +58,23 @@ describe("focus aggregation", () => {
     )).toBe("focused");
   });
 
-  it("assigns distinct chart heights to all states", () => {
+  it("assigns activity scores to current states", () => {
     expect(activityScoreForState("focused")).toBe(1);
     expect(activityScoreForState("distracted")).toBe(0.6);
-    expect(activityScoreForState("away")).toBe(0.2);
+  });
+
+  it("uses the configured input idle threshold", () => {
+    const settings = { ...defaultSettings, inputIdleThresholdSeconds: 120 };
+    expect(classifyMinute(
+      windowEvent("Code", "focus.ts"),
+      { idleSeconds: 90, active: false },
+      settings,
+    )).toBe("focused");
+    expect(classifyMinute(
+      windowEvent("Code", "focus.ts"),
+      { idleSeconds: 120, active: false },
+      settings,
+    )).toBe("distracted");
   });
 
   it("classifies different Safari windows independently", () => {
@@ -198,7 +210,7 @@ function inputEvent(
     duration,
     data: {
       idleSeconds,
-      active: idleSeconds < inputIdleThresholdSeconds,
+      active: idleSeconds < defaultSettings.inputIdleThresholdSeconds,
     },
   };
 }

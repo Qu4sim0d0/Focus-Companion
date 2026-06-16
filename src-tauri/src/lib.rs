@@ -97,6 +97,81 @@ fn get_system_idle_seconds() -> Result<f64, String> {
 }
 
 #[tauri::command]
+fn activitywatch_get(path: String) -> Result<String, String> {
+    run_activitywatch_request("GET", &path, None)
+}
+
+#[tauri::command]
+fn activitywatch_post(path: String, body: String) -> Result<String, String> {
+    run_activitywatch_request("POST", &path, Some(&body))
+}
+
+fn run_activitywatch_request(
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    let urls = activitywatch_urls(path)?;
+    let mut errors = Vec::new();
+
+    for url in urls {
+        let mut command = Command::new("/usr/bin/curl");
+        command.args([
+            "-sS",
+            "--fail-with-body",
+            "--max-time",
+            "10",
+            "-X",
+            method,
+        ]);
+        if let Some(body) = body {
+            command.args([
+                "-H",
+                "Content-Type: application/json",
+                "--data-binary",
+                body,
+            ]);
+        }
+        let output = command
+            .arg(&url)
+            .output()
+            .map_err(|error| format!("Failed to contact ActivityWatch: {error}"))?;
+        if output.status.success() {
+            return String::from_utf8(output.stdout)
+                .map_err(|error| format!("ActivityWatch returned invalid UTF-8: {error}"));
+        }
+
+        let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        });
+        errors.push(format!("{} -> {}: {}", url, output.status, detail.trim()));
+    }
+
+    Err(format!(
+        "ActivityWatch request failed on all local addresses: {}",
+        errors.join(" | ")
+    ))
+}
+
+fn activitywatch_urls(path: &str) -> Result<[String; 3], String> {
+    if !path.starts_with('/')
+        || path.starts_with("//")
+        || path.contains("://")
+        || path.contains('\r')
+        || path.contains('\n')
+    {
+        return Err("Invalid ActivityWatch API path".to_string());
+    }
+    Ok([
+        format!("http://127.0.0.1:5600/api/0{path}"),
+        format!("http://localhost:5600/api/0{path}"),
+        format!("http://[::1]:5600/api/0{path}"),
+    ])
+}
+
+#[tauri::command]
 fn show_notification(title: String, body: String) -> Result<bool, String> {
     let status = Command::new("osascript")
         .args([
@@ -161,6 +236,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            activitywatch_get,
+            activitywatch_post,
             open_activitywatch_window,
             open_accessibility_settings,
             get_system_idle_seconds,

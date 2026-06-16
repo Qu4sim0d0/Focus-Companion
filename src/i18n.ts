@@ -68,6 +68,8 @@ type TranslationKey =
   | "criteriaTitle"
   | "criteriaSummary"
   | "criteriaBody"
+  | "inputIdleThresholdLabel"
+  | "inputIdleThresholdHelp"
   | "nudgeSettingsTitle"
   | "nudgesEnabled"
   | "nudgeDelayLabel"
@@ -130,7 +132,7 @@ type TranslationKey =
   | "focused"
   | "longestRun"
   | "distracted"
-  | "away"
+  | "distractedHelp"
   | "inputActivity"
   | "inputMonitoring"
   | "inputIdle"
@@ -254,11 +256,13 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     introFeatureActivity: "前台进程和窗口标题来自本机 ActivityWatch，用于判断当前任务是否属于专注或分心。",
     introFeatureReports: "图表包括日内时间线、状态占比和周趋势，可以导出为 Markdown 报告。",
     introPrivacy: "语言、设置和最近一次聚合结果保存在本机 localStorage；原始活动数据保存在本机 ActivityWatch。",
-    introObservedTime: "统计总量只覆盖专注伴侣运行期间或已有活动事件的时间，不会把没有打开本应用的整天时间都算作离开。",
+    introObservedTime: "统计总量只覆盖专注伴侣运行期间或已有活动事件的时间；没有输入或缺少观测的分钟会并入分心。",
     criteriaTitle: "专注/分心如何判断",
     criteriaSummary: "输入空闲时间、提醒与手动规则",
     criteriaBody:
-      "键盘、鼠标和触控板连续 60 秒无输入时记为分心；分心窗口或软件会立即记为分心；其余有观测的状态合并计入专注。",
+      "键盘、鼠标和触控板连续超过设定时间无输入时记为分心；分心窗口或软件会立即记为分心；其余有观测的状态合并计入专注。",
+    inputIdleThresholdLabel: "无输入多久算分心",
+    inputIdleThresholdHelp: "可在 30 秒到 30 分钟之间调整；修改后会立即重新计算今日数据。",
     nudgeSettingsTitle: "低打扰分心提醒",
     nudgesEnabled: "连续分心时提醒我",
     nudgeDelayLabel: "提醒前等待",
@@ -321,7 +325,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     focused: "专注",
     longestRun: "最长连续专注",
     distracted: "分心",
-    away: "离开",
+    distractedHelp: "包含无输入和缺少观测的时间",
     inputActivity: "输入状态",
     inputMonitoring: "输入监测",
     inputIdle: "无输入",
@@ -444,11 +448,13 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     introFeatureActivity: "Foreground app and window titles come from local ActivityWatch data to classify focus or distraction.",
     introFeatureReports: "Charts include a daily timeline, state breakdown, and weekly trend, exportable as Markdown reports.",
     introPrivacy: "Language, settings, and the latest aggregate are stored in localStorage; raw activity remains in local ActivityWatch.",
-    introObservedTime: "Totals only cover time while Focus Companion is running, or time with existing activity events. The rest of the day is not counted as away.",
+    introObservedTime: "Totals only cover time while Focus Companion is running, or time with existing activity events. Minutes with no input or missing observations are merged into distracted time.",
     criteriaTitle: "How focus/distraction is decided",
     criteriaSummary: "Input idle time, nudges, and manual rules",
     criteriaBody:
-      "Sixty seconds without keyboard, mouse, or trackpad input is distracted. Distracting apps or windows are distracted immediately. Other observed time is focused.",
+      "Keyboard, mouse, or trackpad idle time past your chosen threshold is distracted. Distracting apps or windows are distracted immediately. Other observed time is focused.",
+    inputIdleThresholdLabel: "Input idle threshold",
+    inputIdleThresholdHelp: "Adjust between 30 seconds and 30 minutes. Today's data recalculates immediately.",
     nudgeSettingsTitle: "Low-interruption nudges",
     nudgesEnabled: "Remind me after continuous distraction",
     nudgeDelayLabel: "Wait before reminding",
@@ -511,7 +517,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     focused: "Focused",
     longestRun: "Longest run",
     distracted: "Distracted",
-    away: "Away",
+    distractedHelp: "Includes no-input and missing-observation time",
     inputActivity: "Input activity",
     inputMonitoring: "Input monitoring",
     inputIdle: "No input",

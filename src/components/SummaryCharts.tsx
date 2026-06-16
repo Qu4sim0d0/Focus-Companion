@@ -6,7 +6,6 @@ import type { ChartPanelHandle } from "./ChartPanel";
 const colors: Record<FocusState, string> = {
   focused: "#16a36a",
   distracted: "#e8872e",
-  away: "#64748b",
 };
 
 interface SummaryChartProps {
@@ -198,7 +197,6 @@ export function buildDonutSegments(summary: DailySummary): DonutSegment[] {
   const values: Array<[FocusState, number]> = [
     ["focused", summary.focusedMinutes],
     ["distracted", summary.distractedMinutes],
-    ["away", summary.awayMinutes],
   ];
   let offset = 0;
   return values.map(([state, minutes]) => {
@@ -211,11 +209,10 @@ export function buildDonutSegments(summary: DailySummary): DonutSegment[] {
 }
 
 export function buildWeeklyChartModel(summary: WeeklySummary) {
-  const states: FocusState[] = ["focused", "distracted", "away"];
+  const states: FocusState[] = ["focused", "distracted"];
   const values = summary.days.flatMap((day) => [
     day.focusedMinutes,
     day.distractedMinutes,
-    day.awayMinutes,
   ]);
   const maxValue = Math.max(1, ...values);
   const roundedMax = Math.max(5, Math.ceil(maxValue / 5) * 5);
@@ -233,9 +230,7 @@ export function buildWeeklyChartModel(summary: WeeklySummary) {
     const points = summary.days.map((day, index) => {
       const value = state === "focused"
         ? day.focusedMinutes
-        : state === "distracted"
-          ? day.distractedMinutes
-          : day.awayMinutes;
+        : day.distractedMinutes;
       return { x: left + index * xStep, y: y(value), value };
     });
     return {
@@ -284,6 +279,5 @@ function sameDailyTotals(left: DailySummary, right: DailySummary): boolean {
   return left.date === right.date &&
     left.totalMinutes === right.totalMinutes &&
     left.focusedMinutes === right.focusedMinutes &&
-    left.distractedMinutes === right.distractedMinutes &&
-    left.awayMinutes === right.awayMinutes;
+    left.distractedMinutes === right.distractedMinutes;
 }

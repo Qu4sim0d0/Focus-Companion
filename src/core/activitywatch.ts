@@ -14,7 +14,13 @@ export interface ActivityWatchBucket {
 }
 
 export class ActivityWatchClient {
-  constructor(private readonly baseUrl = defaultActivityWatchBaseUrl()) {}
+  private readonly baseUrl: string;
+  private readonly hasCustomBaseUrl: boolean;
+
+  constructor(baseUrl?: string) {
+    this.hasCustomBaseUrl = baseUrl !== undefined;
+    this.baseUrl = baseUrl ?? defaultActivityWatchBaseUrl();
+  }
 
   async info(): Promise<Record<string, unknown>> {
     return this.getJson("/info");
@@ -120,6 +126,11 @@ export class ActivityWatchClient {
   }
 
   private async getJson<T>(path: string): Promise<T> {
+    if (this.shouldUseNativeBridge()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const json = await invoke<string>("activitywatch_get", { path });
+      return JSON.parse(json) as T;
+    }
     const response = await fetch(`${this.baseUrl}${path}`);
     if (!response.ok) {
       throw new Error(`ActivityWatch GET ${path} failed with ${response.status}`);
@@ -128,6 +139,14 @@ export class ActivityWatchClient {
   }
 
   private async postJson(path: string, body: unknown): Promise<void> {
+    if (this.shouldUseNativeBridge()) {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke<string>("activitywatch_post", {
+        path,
+        body: JSON.stringify(body),
+      });
+      return;
+    }
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -137,10 +156,21 @@ export class ActivityWatchClient {
       throw new Error(`ActivityWatch POST ${path} failed with ${response.status}`);
     }
   }
+
+  private shouldUseNativeBridge(): boolean {
+    return !this.hasCustomBaseUrl && isTauriDesktop();
+  }
+}
+
+function isTauriDesktop(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    ("__TAURI_INTERNALS__" in window || (globalThis as { isTauri?: boolean }).isTauri === true)
+  );
 }
 
 function defaultActivityWatchBaseUrl(): string {
-  if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
+  if (typeof window !== "undefined" && !isTauriDesktop()) {
     return "/__focus_companion/aw";
   }
   return "http://localhost:5600/api/0";

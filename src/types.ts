@@ -1,6 +1,6 @@
 export type IsoTimestamp = string;
 
-export type FocusState = "focused" | "distracted" | "away";
+export type FocusState = "focused" | "distracted";
 
 export interface ActivityWatchEvent<TData = Record<string, unknown>> {
   id?: number;
@@ -41,6 +41,7 @@ export interface FocusSettings {
   workdayStartHour: number;
   workdayEndHour: number;
   nudgesEnabled: boolean;
+  inputIdleThresholdSeconds: number;
   distractNudgeSeconds: number;
   rules: AppRule[];
   allowedApps: string[];

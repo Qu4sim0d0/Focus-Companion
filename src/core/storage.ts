@@ -55,6 +55,12 @@ export function normalizeSettings(
     workdayStartHour,
     workdayEndHour,
     nudgesEnabled: settings?.nudgesEnabled ?? defaultSettings.nudgesEnabled,
+    inputIdleThresholdSeconds: clampInteger(
+      settings?.inputIdleThresholdSeconds,
+      30,
+      1_800,
+      defaultSettings.inputIdleThresholdSeconds,
+    ),
     distractNudgeSeconds: clampInteger(
       settings?.distractNudgeSeconds,
       30,
@@ -122,26 +128,35 @@ function normalizeDailySummary(summary: DailySummary | null | undefined): DailyS
     }>;
   };
   const neutralMinutes = Number.isFinite(legacy.neutralMinutes) ? legacy.neutralMinutes! : 0;
+  const legacyAwayMinutes = Number.isFinite(summary.awayMinutes) ? summary.awayMinutes : 0;
   const { neutralMinutes: _legacyNeutralMinutes, ...currentSummary } = legacy;
-  return {
-    ...currentSummary,
-    focusedMinutes: Math.max(0, summary.focusedMinutes + neutralMinutes),
-    timeline: legacy.timeline.map((record) => ({
+  const timeline = legacy.timeline.map((record) => {
+    const state = record.state === "neutral"
+      ? "focused"
+      : record.state === "away"
+        ? "distracted"
+        : record.state;
+    return {
       minuteStart: record.minuteStart,
       app: record.app,
       title: record.title,
-      state: record.state === "neutral" ? "focused" : record.state,
+      state,
       activityScore: Number.isFinite(record.activityScore)
         ? record.activityScore!
-        : record.state === "away"
-          ? 0.2
-          : record.state === "distracted"
-            ? 0.6
-            : 1,
+        : state === "distracted"
+          ? 0.6
+          : 1,
       inputActive: typeof record.inputActive === "boolean"
         ? record.inputActive
-        : record.present ?? record.state !== "away",
-    })) as DailySummary["timeline"],
+        : record.present ?? state !== "distracted",
+    };
+  }) as DailySummary["timeline"];
+  return {
+    ...currentSummary,
+    focusedMinutes: Math.max(0, summary.focusedMinutes + neutralMinutes),
+    distractedMinutes: Math.max(0, summary.distractedMinutes + legacyAwayMinutes),
+    awayMinutes: 0,
+    timeline,
   };
 }
 

@@ -9,7 +9,7 @@ describe("daily timeline chart", () => {
       record("2026-06-14T08:59:00.000", "focused"),
       record("2026-06-14T09:00:00.000", "focused"),
       record("2026-06-14T09:01:00.000", "distracted"),
-      record("2026-06-14T09:02:00.000", "away"),
+      record("2026-06-14T09:02:00.000", "focused"),
     ];
     const option = dailyTimelineOption(
       summarizeTimeline("2026-06-14", timeline),
@@ -29,8 +29,8 @@ describe("daily timeline chart", () => {
     }));
     expect(series).toEqual(expect.objectContaining({ type: "bar" }));
     expect(data).toHaveLength(3);
-    expect(data.map((item) => item.value[1])).toEqual([100, 60, 20]);
-    expect(new Set(data.map((item) => item.itemStyle.color)).size).toBe(3);
+    expect(data.map((item) => item.value[1])).toEqual([100, 60, 100]);
+    expect(new Set(data.map((item) => item.itemStyle.color)).size).toBe(2);
   });
 
   it("clamps the three-hour window to the start of the day", () => {
@@ -73,7 +73,7 @@ function record(
 ): MinuteFocusRecord {
   return {
     minuteStart,
-    app: state === "away" ? "" : "Code",
+    app: "Code",
     title: "",
     state,
     activityScore: activityScoreForState(state),

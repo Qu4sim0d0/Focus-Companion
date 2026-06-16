@@ -10,13 +10,11 @@ import type { Locale } from "../i18n";
 const stateColors: Record<FocusState, string> = {
   focused: "#1f9d55",
   distracted: "#d9822b",
-  away: "#6b7280",
 };
 
 const stateHeights: Record<FocusState, number> = {
   focused: 100,
   distracted: 60,
-  away: 20,
 };
 
 const timelineWindowMs = 3 * 60 * 60 * 1000;
@@ -31,7 +29,6 @@ const chartLabels: Record<
   zh: {
     focused: "专注",
     distracted: "分心",
-    away: "离开",
     minutes: "分钟",
     state: "状态",
     app: "应用",
@@ -42,7 +39,6 @@ const chartLabels: Record<
   en: {
     focused: "Focused",
     distracted: "Distracted",
-    away: "Away",
     minutes: "minutes",
     state: "State",
     app: "App",
@@ -135,7 +131,7 @@ export function dailyBreakdownOption(
   locale: Locale = "zh",
 ): EChartsOption {
   const text = chartLabels[locale];
-  const data = (["focused", "distracted", "away"] as FocusState[])
+  const data = (["focused", "distracted"] as FocusState[])
     .map((state) => ({
       name: text[state],
       value: summary[`${state}Minutes` as keyof DailySummary] as number,
@@ -175,7 +171,7 @@ export function weeklyTrendOption(
     tooltip: { trigger: "axis" },
     legend: {
       bottom: 0,
-      data: [text.focused, text.distracted, text.away],
+      data: [text.focused, text.distracted],
       textStyle: { color: "#475569" },
     },
     grid: { left: 36, right: 16, top: 20, bottom: 44 },
@@ -191,7 +187,7 @@ export function weeklyTrendOption(
       axisTick: { show: false },
       splitLine: { lineStyle: { color: "#e2e8f0", type: "dashed" } },
     },
-    series: (["focused", "distracted", "away"] as FocusState[]).map((state) => ({
+    series: (["focused", "distracted"] as FocusState[]).map((state) => ({
       name: text[state],
       type: "line",
       smooth: true,

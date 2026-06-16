@@ -16,6 +16,7 @@ export const defaultSettings: FocusSettings = {
   workdayStartHour: 8,
   workdayEndHour: 22,
   nudgesEnabled: false,
+  inputIdleThresholdSeconds,
   distractNudgeSeconds: 60,
   allowedApps: ["Code", "Terminal", "Xcode"],
   distractingApps: ["YouTube", "TikTok", "Instagram"],
@@ -117,8 +118,8 @@ export function classifyMinute(
   inputMetric: InputMetric | undefined,
   settings: FocusSettings,
 ): FocusState {
-  if (!windowEvent && !inputMetric) return "away";
-  if (inputMetric && inputMetric.idleSeconds >= inputIdleThresholdSeconds) {
+  if (!windowEvent && !inputMetric) return "distracted";
+  if (inputMetric && inputMetric.idleSeconds >= settings.inputIdleThresholdSeconds) {
     return "distracted";
   }
   return scoreWindow(windowEvent, settings) === "distract" ? "distracted" : "focused";
@@ -126,8 +127,7 @@ export function classifyMinute(
 
 export function activityScoreForState(state: FocusState): number {
   if (state === "focused") return 1;
-  if (state === "distracted") return 0.6;
-  return 0.2;
+  return 0.6;
 }
 
 export function aggregateDailyFocus(
@@ -162,7 +162,7 @@ export function aggregateDailyFocus(
       state,
       activityScore: activityScoreForState(state),
       inputActive: Boolean(
-        inputMetric && inputMetric.idleSeconds < inputIdleThresholdSeconds,
+        inputMetric && inputMetric.idleSeconds < settings.inputIdleThresholdSeconds,
       ),
     });
   }
@@ -176,15 +176,14 @@ export function summarizeTimeline(
 ): DailySummary {
   const counts = countStates(timeline);
   const totalMinutes = timeline.length;
-  const activeMinutes = counts.focused + counts.distracted;
-  const focusRatio = activeMinutes === 0 ? 0 : counts.focused / activeMinutes;
+  const focusRatio = totalMinutes === 0 ? 0 : counts.focused / totalMinutes;
 
   return {
     date,
     totalMinutes,
     focusedMinutes: counts.focused,
     distractedMinutes: counts.distracted,
-    awayMinutes: counts.away,
+    awayMinutes: 0,
     focusRatio,
     longestFocusRunMinutes: longestRun(timeline, "focused"),
     timeline,
@@ -284,7 +283,7 @@ function countStates(records: MinuteFocusRecord[]): Record<FocusState, number> {
       counts[record.state] += 1;
       return counts;
     },
-    { focused: 0, distracted: 0, away: 0 },
+    { focused: 0, distracted: 0 },
   );
 }
 
@@ -292,7 +291,7 @@ function dominantState(records: MinuteFocusRecord[]): FocusState {
   const counts = countStates(records);
   return (Object.entries(counts).sort(
     (left, right) => right[1] - left[1],
-  )[0]?.[0] ?? "away") as FocusState;
+  )[0]?.[0] ?? "distracted") as FocusState;
 }
 
 function longestRun(records: MinuteFocusRecord[], state: FocusState): number {
