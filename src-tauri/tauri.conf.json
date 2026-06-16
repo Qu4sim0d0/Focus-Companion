@@ -35,10 +35,7 @@
     "targets": "all",
     "macOS": {
       "entitlements": "./Entitlements.plist",
-      "minimumSystemVersion": "13.0",
-      "files": {
-        "Info.plist": "./Info.plist"
-      }
+      "minimumSystemVersion": "13.0"
     }
   }
 }

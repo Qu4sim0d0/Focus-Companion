@@ -10,7 +10,9 @@
     "test": "vitest run",
     "setup": "bash scripts/setup.sh",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:sign-local": "bash scripts/sign-local-app.sh",
+    "tauri:build:local": "npm run tauri:build && npm run tauri:sign-local"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
