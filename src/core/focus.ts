@@ -70,13 +70,6 @@ export function explainWindowScore(
   const normalizedApp = app.toLowerCase();
   const normalizedTitle = title.toLowerCase();
 
-  if (
-    normalizedApp.includes("focus companion") ||
-    normalizedApp.includes("focus-companion")
-  ) {
-    return { score: "focus", source: "self" };
-  }
-
   const distractingWindow = matchingPattern(
     normalizedTitle,
     settings.distractingWindowTitles,
@@ -108,6 +101,13 @@ export function explainWindowScore(
     if (haystack.toLowerCase().includes(rule.pattern.toLowerCase())) {
       return { score: rule.mode, source: "legacy", pattern: rule.pattern };
     }
+  }
+
+  if (
+    normalizedApp.includes("focus companion") ||
+    normalizedApp.includes("focus-companion")
+  ) {
+    return { score: "focus", source: "self" };
   }
 
   return { score: "unclassified", source: "none" };
@@ -190,6 +190,31 @@ export function summarizeTimeline(
   };
 }
 
+export function reclassifyDailySummary(
+  summary: DailySummary,
+  settings: FocusSettings,
+): DailySummary {
+  const timeline = summary.timeline.map((record) => {
+    const windowEvent: ActivityWatchEvent<WindowEventData> | undefined = record.app || record.title
+      ? {
+          timestamp: record.minuteStart,
+          duration: 60,
+          data: { app: record.app, title: record.title },
+        }
+      : undefined;
+    const inputMetric: InputMetric | undefined = record.inputActive
+      ? { idleSeconds: 0, active: true }
+      : undefined;
+    const state = classifyMinute(windowEvent, inputMetric, settings);
+    return {
+      ...record,
+      state,
+      activityScore: activityScoreForState(state),
+    };
+  });
+  return summarizeTimeline(summary.date, timeline);
+}
+
 export function buildWeeklySummary(
   weekLabel: string,
   days: DailySummary[],
@@ -252,29 +277,83 @@ function observedMinuteStarts(
   windowEvents: ActivityWatchEvent<WindowEventData>[],
   inputEvents: ActivityWatchEvent<InputMetric>[],
 ): number[] {
-  const activeSessionEvents = sessionEvents.filter((event) => event.data.running);
-  const sourceEvents = activeSessionEvents.length > 0
-    ? activeSessionEvents
-    : [...windowEvents, ...inputEvents];
   const minutes = new Set<number>();
+  const sessionMinutes = activeSessionMinuteStarts(dayStart, dayEnd, sessionEvents);
+  const sourceEvents = sessionMinutes.length > 0
+    ? []
+    : [...windowEvents, ...inputEvents];
+
+  for (const timestamp of sessionMinutes) {
+    minutes.add(timestamp);
+  }
 
   for (const event of sourceEvents) {
-    const eventStart = new Date(event.timestamp).getTime();
-    const start = Math.max(
-      startOfMinute(new Date(eventStart)).getTime(),
-      dayStart.getTime(),
-    );
-    const rawEnd = eventStart + Math.max(event.duration * 1000, 1);
-    const end = Math.min(
-      startOfMinute(new Date(rawEnd - 1)).getTime(),
-      dayEnd.getTime() - minuteMs,
-    );
-    for (let timestamp = start; timestamp <= end; timestamp += minuteMs) {
-      minutes.add(timestamp);
-    }
+    addEventMinutes(minutes, dayStart, dayEnd, event);
   }
 
   return Array.from(minutes).sort((left, right) => left - right);
+}
+
+function activeSessionMinuteStarts(
+  dayStart: Date,
+  dayEnd: Date,
+  sessionEvents: ActivityWatchEvent<FocusSessionData>[],
+): number[] {
+  const sortedEvents = [...sessionEvents].sort(
+    (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+  );
+  const minutes = new Set<number>();
+
+  for (let index = 0; index < sortedEvents.length; index += 1) {
+    const event = sortedEvents[index];
+    if (!event.data.running) continue;
+
+    const eventStart = new Date(event.timestamp).getTime();
+    const nextEvent = sortedEvents[index + 1];
+    const nextStart = nextEvent ? new Date(nextEvent.timestamp).getTime() : undefined;
+    let rawEnd = eventStart + Math.max(event.duration * 1000, 1);
+
+    if (nextStart !== undefined && nextStart > eventStart) {
+      rawEnd = nextEvent.data.running
+        ? Math.max(rawEnd, nextStart)
+        : nextStart;
+    }
+
+    addMinutesInRange(minutes, dayStart, dayEnd, eventStart, rawEnd);
+  }
+
+  return Array.from(minutes).sort((left, right) => left - right);
+}
+
+function addEventMinutes(
+  minutes: Set<number>,
+  dayStart: Date,
+  dayEnd: Date,
+  event: ActivityWatchEvent<unknown>,
+): void {
+  const eventStart = new Date(event.timestamp).getTime();
+  const rawEnd = eventStart + Math.max(event.duration * 1000, 1);
+  addMinutesInRange(minutes, dayStart, dayEnd, eventStart, rawEnd);
+}
+
+function addMinutesInRange(
+  minutes: Set<number>,
+  dayStart: Date,
+  dayEnd: Date,
+  rawStart: number,
+  rawEnd: number,
+): void {
+  const start = Math.max(
+    startOfMinute(new Date(rawStart)).getTime(),
+    dayStart.getTime(),
+  );
+  const end = Math.min(
+    startOfMinute(new Date(rawEnd - 1)).getTime(),
+    dayEnd.getTime() - minuteMs,
+  );
+  for (let timestamp = start; timestamp <= end; timestamp += minuteMs) {
+    minutes.add(timestamp);
+  }
 }
 
 function countStates(records: MinuteFocusRecord[]): Record<FocusState, number> {

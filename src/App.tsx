@@ -17,6 +17,7 @@ import {
   aggregateDailyFocus,
   buildWeeklySummary,
   defaultSettings,
+  reclassifyDailySummary,
   summarizeTimeline,
 } from "./core/focus";
 import { getInputActivitySnapshot } from "./core/inputActivity";
@@ -362,6 +363,25 @@ export function App() {
     };
   }, [applyLoadedSummaries, connected, hasLoadedSummaries, loadActivityWatchSummaries]);
 
+  const applyRuleChangeToSummaries = useCallback((nextSettings: FocusSettings) => {
+    const currentInputs = todayInputsRef.current;
+    if (currentInputs) {
+      applyInputEvents(currentInputs, nextSettings);
+      return;
+    }
+
+    if (dailySummary) {
+      const nextDaily = reclassifyDailySummary(dailySummary, nextSettings);
+      setDailySummary(nextDaily);
+      setWeeklySummary((current) => mergeTodayIntoWeekly(current, nextDaily));
+      return;
+    }
+
+    if (weeklySummary) {
+      setWeeklySummary(null);
+    }
+  }, [applyInputEvents, dailySummary, weeklySummary]);
+
   const saveRuleSettings = useCallback(async () => {
     const nextSettings: FocusSettings = {
       ...settings,
@@ -370,36 +390,28 @@ export function App() {
       allowedWindowTitles: parseRuleList(allowedWindowTitlesText),
       distractingWindowTitles: parseRuleList(distractingWindowTitlesText),
     };
+    settingsRef.current = nextSettings;
     setSettings(nextSettings);
+    applyRuleChangeToSummaries(nextSettings);
     if (connected) {
       try {
         applyLoadedSummaries(await loadActivityWatchSummaries(nextSettings));
       } catch {
         // Keep the saved rules even if ActivityWatch disconnects during recalculation.
       }
-    } else if (todayInputs) {
-      applyInputEvents(todayInputs, nextSettings);
-    } else if (dailySummary || weeklySummary) {
-      setDailySummary(null);
-      setWeeklySummary(null);
-      setStatus(t(locale, "rulesReloadRequired"));
-      return;
     }
     setStatus(t(locale, "rulesSaved"));
   }, [
     allowedAppsText,
     allowedWindowTitlesText,
+    applyRuleChangeToSummaries,
     applyLoadedSummaries,
     connected,
-    dailySummary,
     distractingAppsText,
     distractingWindowTitlesText,
     loadActivityWatchSummaries,
     locale,
     settings,
-    todayInputs,
-    weeklySummary,
-    applyInputEvents,
   ]);
 
   const updateNudgesEnabled = useCallback(async (enabled: boolean) => {
@@ -456,23 +468,16 @@ export function App() {
       distractingApps: nextDistracting,
       rules: settings.rules.filter((rule) => !sameApp(rule.pattern)),
     };
+    settingsRef.current = nextSettings;
     setSettings(nextSettings);
     setAllowedAppsText(nextAllowed.join("\n"));
     setDistractingAppsText(nextDistracting.join("\n"));
-    if (todayInputs) {
-      applyInputEvents(todayInputs, nextSettings);
-    } else if (dailySummary || weeklySummary) {
-      setDailySummary(null);
-      setWeeklySummary(null);
-    }
+    applyRuleChangeToSummaries(nextSettings);
     setStatus(t(locale, "appRuleUpdated"));
   }, [
-    applyInputEvents,
-    dailySummary,
+    applyRuleChangeToSummaries,
     locale,
     settings,
-    todayInputs,
-    weeklySummary,
   ]);
 
   const setObservedWindowMode = useCallback((
@@ -491,23 +496,16 @@ export function App() {
       distractingWindowTitles: nextDistracting,
       rules: settings.rules.filter((rule) => !(rule.matchTitle && sameTitle(rule.pattern))),
     };
+    settingsRef.current = nextSettings;
     setSettings(nextSettings);
     setAllowedWindowTitlesText(nextAllowed.join("\n"));
     setDistractingWindowTitlesText(nextDistracting.join("\n"));
-    if (todayInputs) {
-      applyInputEvents(todayInputs, nextSettings);
-    } else if (dailySummary || weeklySummary) {
-      setDailySummary(null);
-      setWeeklySummary(null);
-    }
+    applyRuleChangeToSummaries(nextSettings);
     setStatus(t(locale, "windowRuleUpdated"));
   }, [
-    applyInputEvents,
-    dailySummary,
+    applyRuleChangeToSummaries,
     locale,
     settings,
-    todayInputs,
-    weeklySummary,
   ]);
 
   const appendSessionEvent = useCallback((

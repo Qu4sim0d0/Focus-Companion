@@ -17,11 +17,63 @@ import type {
   DailySummary,
   FocusSettings,
   FocusState,
+  MinuteFocusRecord,
 } from "../types";
 
 export interface FocusNudge {
   app: string;
   distractedSeconds: number;
+}
+
+export interface LiveInputSnapshot {
+  available: boolean;
+  idleSeconds: number;
+}
+
+export interface LiveStatusModel {
+  currentRecord?: MinuteFocusRecord;
+  inputActive: boolean;
+  state: FocusState;
+  windowExplanation: WindowScoreExplanation | null;
+}
+
+export function buildLiveStatusModel(
+  currentRecord: MinuteFocusRecord | undefined,
+  input: LiveInputSnapshot,
+  settings: FocusSettings,
+): LiveStatusModel {
+  const inputActive = input.available
+    ? input.idleSeconds < settings.inputIdleThresholdSeconds
+    : true;
+  const windowExplanation = currentRecord
+    ? explainWindowScore({
+        timestamp: currentRecord.minuteStart,
+        duration: 60,
+        data: { app: currentRecord.app, title: currentRecord.title },
+      }, settings)
+    : null;
+  const state: FocusState = input.available && !inputActive
+    ? "distracted"
+    : windowExplanation?.score === "distract"
+      ? "distracted"
+      : "focused";
+
+  return {
+    currentRecord,
+    inputActive,
+    state,
+    windowExplanation,
+  };
+}
+
+export function liveStatusAppSignal(
+  currentRecord: MinuteFocusRecord | undefined,
+  explanation: WindowScoreExplanation | null,
+  locale: Locale,
+): string {
+  return currentRecord?.app
+    ? `${currentRecord.app} · ${windowScoreLabel(explanation, locale)}`
+    : t(locale, "noCurrentApp");
 }
 
 interface LiveStatusProps {
@@ -44,38 +96,17 @@ export const LiveStatus = memo(function LiveStatus({
   const nowMs = useTime();
   const input = useInputActivity();
   const model = useMemo(() => {
-    const inputActive = input.available
-      ? input.idleSeconds < settings.inputIdleThresholdSeconds
-      : true;
     const latestRecord = dailySummary?.timeline[dailySummary.timeline.length - 1];
     const currentRecord = latestRecord && isFreshTimestamp(nowMs, latestRecord.minuteStart)
       ? latestRecord
       : undefined;
-    const liveWindowEvent = currentRecord
-      ? {
-          timestamp: currentRecord.minuteStart,
-          duration: 60,
-          data: { app: currentRecord.app, title: currentRecord.title },
-        }
-      : undefined;
-    const windowExplanation = currentRecord
-      ? explainWindowScore(liveWindowEvent, settings)
-      : null;
-    const state: FocusState = input.available && !inputActive
-      ? "distracted"
-      : currentRecord?.state === "distracted"
-        ? "distracted"
-        : "focused";
+    const status = buildLiveStatusModel(currentRecord, input, settings);
 
     return {
-      currentRecord,
-      state,
-      inputActive,
-      appSignal: currentRecord?.app
-        ? `${currentRecord.app} · ${windowScoreLabel(windowExplanation, locale)}`
-        : t(locale, "noCurrentApp"),
+      ...status,
+      appSignal: liveStatusAppSignal(currentRecord, status.windowExplanation, locale),
     };
-  }, [dailySummary, input.available, input.idleSeconds, locale, nowMs, settings]);
+  }, [dailySummary, input, locale, nowMs, settings]);
 
   useEffect(() => {
     const previousTracker = nudgeTrackerRef.current;

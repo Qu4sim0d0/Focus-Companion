@@ -5,6 +5,7 @@ import {
   classifyMinute,
   defaultSettings,
   explainWindowScore,
+  reclassifyDailySummary,
   scoreWindow,
   summarizeTimeline,
 } from "./focus";
@@ -124,6 +125,41 @@ describe("focus aggregation", () => {
     expect(scoreWindow(windowEvent("Safari", "课程直播"), settings)).toBe("distract");
   });
 
+  it("allows explicit rules to classify Focus Companion as distracting", () => {
+    expect(scoreWindow(windowEvent("Focus Companion", "Settings"), {
+      ...defaultSettings,
+      distractingApps: ["Focus Companion"],
+      rules: [],
+    })).toBe("distract");
+  });
+
+  it("reclassifies cached timeline records with updated app rules", () => {
+    const summary = summarizeTimeline("2026-06-14", [{
+      minuteStart: "2026-06-14T09:00:00.000Z",
+      app: "Codex",
+      title: "Review",
+      state: "distracted",
+      activityScore: 0.6,
+      inputActive: true,
+    }]);
+
+    const updated = reclassifyDailySummary(summary, {
+      ...defaultSettings,
+      allowedApps: ["Codex"],
+      distractingApps: [],
+      allowedWindowTitles: [],
+      distractingWindowTitles: [],
+      rules: [],
+    });
+
+    expect(updated.focusedMinutes).toBe(1);
+    expect(updated.distractedMinutes).toBe(0);
+    expect(updated.timeline[0]).toEqual(expect.objectContaining({
+      state: "focused",
+      activityScore: 1,
+    }));
+  });
+
   it("aggregates one input sample into one minute", () => {
     const date = "2026-06-14";
     const summary = aggregateDailyFocus(
@@ -166,6 +202,42 @@ describe("focus aggregation", () => {
 
     expect(summary.totalMinutes).toBe(2);
     expect(summary.focusedMinutes).toBe(2);
+  });
+
+  it("fills gaps between running session heartbeats as distracted time", () => {
+    const date = "2026-06-14";
+    const sessions: ActivityWatchEvent<FocusSessionData>[] = [
+      {
+        timestamp: `${date}T09:00:00.000`,
+        duration: 0,
+        data: { running: true },
+      },
+      {
+        timestamp: `${date}T09:20:00.000`,
+        duration: 0,
+        data: { running: true },
+      },
+    ];
+    const summary = aggregateDailyFocus(
+      date,
+      [{
+        timestamp: `${date}T09:00:00.000`,
+        duration: 60,
+        data: { app: "Code", title: "focus.ts" },
+      }],
+      [inputEvent(`${date}T09:00:00.000`, 1, 60)],
+      defaultSettings,
+      sessions,
+    );
+
+    expect(summary.totalMinutes).toBe(21);
+    expect(summary.focusedMinutes).toBe(1);
+    expect(summary.distractedMinutes).toBe(20);
+    expect(summary.focusedMinutes + summary.distractedMinutes).toBe(summary.totalMinutes);
+    expect(summary.timeline[1]).toEqual(expect.objectContaining({
+      state: "distracted",
+    }));
+    expect(new Date(summary.timeline[1].minuteStart).getMinutes()).toBe(1);
   });
 
   it("summarizes longest focus run", () => {
