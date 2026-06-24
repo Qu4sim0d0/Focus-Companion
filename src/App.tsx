@@ -6,41 +6,22 @@ import {
   useRef,
   useState,
 } from "react";
-import { ActivityWatchClient, formatLocalDate, todayRange } from "./core/activitywatch";
+import { ActivityWatchClient, formatLocalDate } from "./core/activitywatch";
 import {
   openAccessibilitySettings,
   openActivityWatchWindow,
   requestFocusNotificationPermission,
-  startActivityWatchApp,
 } from "./core/desktopBridge";
 import {
-  aggregateDailyFocus,
-  buildWeeklySummary,
   defaultSettings,
   reclassifyDailySummary,
-  summarizeTimeline,
 } from "./core/focus";
-import { getInputActivitySnapshot } from "./core/inputActivity";
 import { type NudgeTracker } from "./core/nudges";
 import {
   observedAppMode,
   observedWindowMode,
-  summarizeObservedApps,
-  summarizeObservedWindows,
-  type ObservedApp,
   type ObservedWindow,
 } from "./core/observedActivity";
-import {
-  advanceFocusSessionClock,
-  endFocusSessionClock,
-  loadFocusSessionClock,
-  pauseFocusSessionClock,
-  persistFocusSessionClock,
-  resetFocusSessionClock,
-  resumeFocusSessionClock,
-  startFocusSessionClock,
-  type FocusSessionClock,
-} from "./core/focusSession";
 import { buildDailyMarkdown, buildWeeklyMarkdown, type ChartAsset, saveMarkdownReport } from "./core/report";
 import {
   currentDailySummary,
@@ -53,6 +34,11 @@ import {
   parseSettingsBackup,
   serializeSettingsBackup,
 } from "./core/settingsBackup";
+import {
+  mergeTodayIntoWeekly,
+  useActivityWatchSync,
+} from "./hooks/useActivityWatchSync";
+import { useFocusSessionController } from "./hooks/useFocusSessionController";
 import { TimelineChartPanel, type ChartPanelHandle } from "./components/ChartPanel";
 import { DailyBreakdownChart, WeeklyTrendChart } from "./components/SummaryCharts";
 import { Layout, MainContent, Sidebar } from "./components/AppLayout";
@@ -72,40 +58,22 @@ import type {
   FocusSettings,
   InputMetric,
   WeeklySummary,
-  WindowEventData,
 } from "./types";
 
 const aw = new ActivityWatchClient();
 
-interface LoadedSummaries {
-  dailySummary: DailySummary;
-  weeklySummary: WeeklySummary;
-  todayInputs: FocusInputEvents;
-}
-
-interface ErrorNotice {
-  message: string;
-}
-
 export function App() {
   const settingsImportRef = useRef<HTMLInputElement | null>(null);
-  const inputBucketIdRef = useRef<string | undefined>(undefined);
   const chartsRef = useRef<Map<string, ChartPanelHandle>>(new Map());
   const todayInputsRef = useRef<FocusInputEvents | null>(null);
   const localInputEventsRef = useRef<ActivityWatchEvent<InputMetric>[]>([]);
   const localSessionEventsRef = useRef<ActivityWatchEvent<FocusSessionData>[]>([]);
-  const awBusyRef = useRef(false);
-  const sessionStartingRef = useRef(false);
-  const monitoringReadyRef = useRef(false);
   const nudgeTrackerRef = useRef<NudgeTracker>({
     distractedSince: null,
     lastNudgeAt: null,
   });
-  const focusSessionRef = useRef<FocusSessionClock | null>(null);
-  if (!focusSessionRef.current) {
-    focusSessionRef.current = loadFocusSessionClock(Date.now());
-  }
   const [storedState] = useState(() => loadStoredState());
+  const initialDailySummary = currentDailySummary(storedState.dailySummary);
   const [locale, setLocale] = useState<Locale>(storedState.locale);
   const [settings, setSettings] = useState<FocusSettings>(storedState.settings);
   const [allowedAppsText, setAllowedAppsText] = useState(storedState.settings.allowedApps.join("\n"));
@@ -116,35 +84,77 @@ export function App() {
   const [distractingWindowTitlesText, setDistractingWindowTitlesText] = useState(
     storedState.settings.distractingWindowTitles.join("\n"),
   );
-  const [status, setStatus] = useState(() => t(storedState.locale, "ready"));
-  const [connected, setConnected] = useState(false);
-  const [dailySummary, setDailySummary] = useState<DailySummary | null>(
-    currentDailySummary(storedState.dailySummary),
+  const [status, setStatus] = useState(() =>
+    t(storedState.locale, initialDailySummary ? "readyCached" : "ready"),
   );
+  const [connected, setConnected] = useState(false);
+  const [dailySummary, setDailySummary] = useState<DailySummary | null>(initialDailySummary);
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(storedState.weeklySummary);
-  const [todayInputs, setTodayInputs] = useState<FocusInputEvents | null>(null);
-  const [observedApps, setObservedApps] = useState<ObservedApp[]>([]);
-  const [observedWindows, setObservedWindows] = useState<ObservedWindow[]>([]);
   const [appSearch, setAppSearch] = useState("");
   const [appFilter, setAppFilter] = useState<"all" | "focus" | "distract">("all");
   const [windowSearch, setWindowSearch] = useState("");
   const [windowFilter, setWindowFilter] = useState<"all" | "focus" | "distract">("all");
-  const [awBusy, setAwBusy] = useState(false);
-  const [sessionStarting, setSessionStarting] = useState(false);
-  const [errorNotice, setErrorNotice] = useState<ErrorNotice | null>(null);
   const [focusNudge, setFocusNudge] = useState<FocusNudge | null>(null);
   const [clearDataArmed, setClearDataArmed] = useState(false);
   const [resetSettingsArmed, setResetSettingsArmed] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  const [focusSessionClock, setFocusSessionClock] = useState<FocusSessionClock>(
-    () => focusSessionRef.current!,
-  );
   const hasLoadedSummaries = dailySummary !== null;
   const settingsRef = useRef(settings);
 
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  const {
+    awBusy,
+    errorNotice,
+    observedApps,
+    observedWindows,
+    setErrorNotice,
+    applyLoadedSummaries,
+    applyInputEvents,
+    refreshActivityWatch,
+    refreshObservedApps,
+    loadActivityWatchSummaries,
+    appendSessionEvent,
+    writeSessionBoundary,
+    clearObservedActivity,
+  } = useActivityWatchSync({
+    aw,
+    locale,
+    settings,
+    connected,
+    hasLoadedSummaries,
+    todayInputsRef,
+    settingsRef,
+    localInputEventsRef,
+    localSessionEventsRef,
+    setConnected,
+    setStatus,
+    setDailySummary,
+    setWeeklySummary,
+  });
+
+  const {
+    focusSessionClock,
+    sessionStarting,
+    startFocusSession,
+    pauseFocusSession,
+    resumeFocusSession,
+    endFocusSession,
+    resetSessionClock,
+  } = useFocusSessionController({
+    aw,
+    locale,
+    connected,
+    refreshActivityWatch,
+    appendSessionEvent,
+    writeSessionBoundary,
+    setConnected,
+    setStatus,
+    setFocusNudge,
+    nudgeTrackerRef,
+  });
 
   useEffect(() => {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
@@ -163,30 +173,6 @@ export function App() {
   }, [settingsMenuOpen]);
 
   useEffect(() => {
-    if (!connected) return;
-    let cancelled = false;
-    let timeoutId: number | undefined;
-
-    const checkConnection = async () => {
-      try {
-        await aw.info();
-        if (!cancelled) setConnected(true);
-      } catch {
-        if (!cancelled) setConnected(false);
-      }
-      if (!cancelled) {
-        timeoutId = window.setTimeout(checkConnection, 30_000);
-      }
-    };
-
-    void checkConnection();
-    return () => {
-      cancelled = true;
-      if (timeoutId) window.clearTimeout(timeoutId);
-    };
-  }, [connected]);
-
-  useEffect(() => {
     saveStoredState({
       locale,
       settings,
@@ -203,165 +189,14 @@ export function App() {
       const localToday = formatLocalDate(new Date());
       if (dailySummary && dailySummary.date !== localToday) {
         todayInputsRef.current = null;
-        setTodayInputs(null);
         setDailySummary(null);
         setFocusNudge(null);
         nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
       }
-      const nextFocusSession = resetFocusSessionClock(Date.now());
-      focusSessionRef.current = nextFocusSession;
-      setFocusSessionClock(nextFocusSession);
-      persistFocusSessionClock(nextFocusSession);
+      resetSessionClock();
     }, Math.max(1_000, nextDay.getTime() - now.getTime()));
     return () => window.clearTimeout(timeoutId);
-  }, [dailySummary, focusSessionClock.date]);
-
-  const loadActivityWatchSummaries = useCallback(async (
-    activeSettings: FocusSettings = settings,
-  ): Promise<LoadedSummaries> => {
-    const today = todayRange();
-    const todayDate = today.date;
-    const [windowEvents, storedInputEvents, storedSessionEvents, weeklyDays] = await Promise.all([
-      aw.getTodayWindowEvents(),
-      aw.getTodayInputEvents(),
-      aw.getTodaySessionEvents(),
-      loadWeeklySummaries(activeSettings),
-    ]);
-    const inputEvents = mergeEvents(storedInputEvents, localInputEventsRef.current);
-    const sessionEvents = mergeEvents(storedSessionEvents, localSessionEventsRef.current);
-    const todaySummary = aggregateDailyFocus(
-      todayDate,
-      windowEvents,
-      inputEvents,
-      activeSettings,
-      sessionEvents,
-    );
-    const mergedDays = weeklyDays.map((day) => (day.date === todayDate ? todaySummary : day));
-    const nextWeeklySummary = buildWeeklySummary(
-      `${mergedDays[0]?.date ?? todayDate} - ${mergedDays[6]?.date ?? todayDate}`,
-      mergedDays,
-    );
-    return {
-      dailySummary: todaySummary,
-      weeklySummary: nextWeeklySummary,
-      todayInputs: { date: todayDate, windowEvents, inputEvents, sessionEvents },
-    };
-  }, [settings]);
-
-  const applyLoadedSummaries = useCallback(({ dailySummary, weeklySummary, todayInputs }: LoadedSummaries) => {
-    todayInputsRef.current = todayInputs;
-    setDailySummary(dailySummary);
-    setWeeklySummary(weeklySummary);
-    setTodayInputs(todayInputs);
-    setObservedApps(summarizeObservedApps(todayInputs.windowEvents));
-    setObservedWindows(summarizeObservedWindows(todayInputs.windowEvents));
-  }, []);
-
-  const applyInputEvents = useCallback((
-    inputs: FocusInputEvents,
-    activeSettings: FocusSettings = settings,
-  ) => {
-    const nextDaily = aggregateDailyFocus(
-      inputs.date,
-      inputs.windowEvents,
-      inputs.inputEvents,
-      activeSettings,
-      inputs.sessionEvents,
-    );
-    todayInputsRef.current = inputs;
-    setTodayInputs(inputs);
-    setDailySummary(nextDaily);
-    setWeeklySummary((current) => mergeTodayIntoWeekly(current, nextDaily));
-  }, [settings]);
-
-  const refreshObservedApps = useCallback(async () => {
-    if (awBusyRef.current) return;
-    awBusyRef.current = true;
-    setAwBusy(true);
-    setErrorNotice(null);
-    try {
-      setStatus(t(locale, "autoStartAw"));
-      const startResult = await startActivityWatchApp();
-      if (startResult === "browser-mode") {
-        setStatus(t(locale, "awBrowserMode"));
-      }
-      await waitForActivityWatch();
-      setStatus(t(locale, "connectingAw"));
-      const windowEvents = await aw.getTodayWindowEvents();
-      setObservedApps(summarizeObservedApps(windowEvents));
-      setObservedWindows(summarizeObservedWindows(windowEvents));
-      setConnected(true);
-      setStatus(t(locale, "loadedAwActivity"));
-    } catch (error) {
-      setConnected(false);
-      const message = error instanceof Error ? `${t(locale, "awFailed")} ${error.message}` : t(locale, "awFailed");
-      setStatus(message);
-      setErrorNotice({ message });
-    } finally {
-      awBusyRef.current = false;
-      setAwBusy(false);
-    }
-  }, [locale]);
-
-  const refreshActivityWatch = useCallback(async (): Promise<boolean> => {
-    if (awBusyRef.current) return connected;
-    awBusyRef.current = true;
-    setAwBusy(true);
-    setErrorNotice(null);
-    try {
-      setStatus(t(locale, "autoStartAw"));
-      const startResult = await startActivityWatchApp();
-      if (startResult === "browser-mode") {
-        setStatus(t(locale, "awBrowserMode"));
-      }
-      await waitForActivityWatch();
-      setStatus(t(locale, "connectingAw"));
-      setConnected(true);
-      applyLoadedSummaries(await loadActivityWatchSummaries());
-      setStatus(t(locale, "loadedAw"));
-      return true;
-    } catch (error) {
-      setConnected(false);
-      const message = error instanceof Error ? `${t(locale, "awFailed")} ${error.message}` : t(locale, "awFailed");
-      setStatus(message);
-      setErrorNotice({ message });
-      return false;
-    } finally {
-      awBusyRef.current = false;
-      setAwBusy(false);
-    }
-  }, [applyLoadedSummaries, connected, loadActivityWatchSummaries, locale]);
-
-  useEffect(() => {
-    if (!connected || !hasLoadedSummaries) return;
-    let cancelled = false;
-    let inFlight = false;
-
-    const intervalId = window.setInterval(() => {
-      if (inFlight) return;
-      inFlight = true;
-      loadActivityWatchSummaries()
-        .then((summaries) => {
-          if (!cancelled) {
-            applyLoadedSummaries(summaries);
-            setConnected(true);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setConnected(false);
-          }
-        })
-        .finally(() => {
-          inFlight = false;
-        });
-    }, 60_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [applyLoadedSummaries, connected, hasLoadedSummaries, loadActivityWatchSummaries]);
+  }, [dailySummary, focusSessionClock.date, resetSessionClock]);
 
   const applyRuleChangeToSummaries = useCallback((nextSettings: FocusSettings) => {
     const currentInputs = todayInputsRef.current;
@@ -508,154 +343,6 @@ export function App() {
     settings,
   ]);
 
-  const appendSessionEvent = useCallback((
-    running: boolean,
-    sampledAt = new Date(),
-  ) => {
-    const date = formatLocalDate(sampledAt);
-    const sessionEvent: ActivityWatchEvent<FocusSessionData> = {
-      timestamp: sampledAt.toISOString(),
-      duration: 0,
-      data: { running },
-    };
-    localSessionEventsRef.current = keepTodayEvents(
-      [...localSessionEventsRef.current, sessionEvent],
-      date,
-    );
-    const current = todayInputsRef.current?.date === date
-      ? todayInputsRef.current
-      : null;
-    if (!current) return;
-    applyInputEvents({
-      ...current,
-      sessionEvents: mergeEvents(current.sessionEvents, [sessionEvent]),
-    }, settingsRef.current);
-  }, [applyInputEvents]);
-
-  useEffect(() => {
-    if (focusSessionClock.status !== "running") return;
-    let cancelled = false;
-    let timeoutId: number | undefined;
-
-    const pulse = async () => {
-      const now = Date.now();
-      const persistedClock = advanceFocusSessionClock(focusSessionRef.current!, now);
-      focusSessionRef.current = persistedClock;
-      persistFocusSessionClock(persistedClock);
-      appendSessionEvent(true, new Date(now));
-      if (connected) {
-        try {
-          const bucketId = await aw.ensureSessionBucket("local");
-          await aw.heartbeatSession(bucketId, true);
-        } catch {
-          setConnected(false);
-        }
-      }
-      if (!cancelled) timeoutId = window.setTimeout(pulse, 60_000);
-    };
-
-    void pulse();
-    return () => {
-      cancelled = true;
-      if (timeoutId) window.clearTimeout(timeoutId);
-    };
-  }, [appendSessionEvent, connected, focusSessionClock.status]);
-
-  const writeSessionBoundary = useCallback((running: boolean) => {
-    appendSessionEvent(running);
-    if (!connected) return;
-    void aw.ensureSessionBucket("local")
-      .then((bucketId) => aw.heartbeatSession(bucketId, running))
-      .catch(() => {
-        // The local boundary remains authoritative until ActivityWatch reconnects.
-      });
-  }, [appendSessionEvent, connected]);
-
-  const pauseFocusSession = useCallback(() => {
-    const now = Date.now();
-    const next = pauseFocusSessionClock(focusSessionRef.current!, now);
-    focusSessionRef.current = next;
-    persistFocusSessionClock(next);
-    setFocusSessionClock(next);
-    writeSessionBoundary(false);
-    setFocusNudge(null);
-    setStatus(t(locale, "sessionPaused"));
-  }, [locale, writeSessionBoundary]);
-
-  useEffect(() => {
-    if (
-      focusSessionClock.status !== "running" ||
-      connected ||
-      !monitoringReadyRef.current ||
-      sessionStartingRef.current
-    ) {
-      return;
-    }
-    pauseFocusSession();
-    setStatus(t(locale, "sessionPausedMonitoringLost"));
-  }, [connected, focusSessionClock.status, locale, pauseFocusSession]);
-
-  const appendInputMetric = useCallback((metric: InputMetric, sampledAt = new Date()) => {
-    const date = formatLocalDate(sampledAt);
-    const inputEvent: ActivityWatchEvent<InputMetric> = {
-      timestamp: sampledAt.toISOString(),
-      duration: 65,
-      data: metric,
-    };
-    localInputEventsRef.current = keepTodayEvents(
-      [...localInputEventsRef.current, inputEvent],
-      date,
-    );
-
-    const current = todayInputsRef.current?.date === date
-      ? todayInputsRef.current
-      : {
-          date,
-          windowEvents: [],
-          inputEvents: [],
-          sessionEvents: localSessionEventsRef.current,
-        };
-    applyInputEvents(
-      {
-        ...current,
-        inputEvents: mergeEvents(current.inputEvents, [inputEvent]),
-      },
-      settingsRef.current,
-    );
-  }, [applyInputEvents]);
-
-  useEffect(() => {
-    if (!connected) return;
-    let cancelled = false;
-    let timeoutId: number | undefined;
-
-    const pulse = async () => {
-      const snapshot = getInputActivitySnapshot();
-      if (!snapshot.available) {
-        if (!cancelled) timeoutId = window.setTimeout(pulse, 60_000);
-        return;
-      }
-      const metric: InputMetric = {
-        idleSeconds: Math.round(snapshot.idleSeconds),
-        active: snapshot.idleSeconds < settingsRef.current.inputIdleThresholdSeconds,
-      };
-      appendInputMetric(metric);
-      try {
-        inputBucketIdRef.current ??= await aw.ensureInputBucket("local");
-        await aw.heartbeatInputMetric(inputBucketIdRef.current, metric);
-      } catch {
-        inputBucketIdRef.current = undefined;
-      }
-      if (!cancelled) timeoutId = window.setTimeout(pulse, 60_000);
-    };
-
-    void pulse();
-    return () => {
-      cancelled = true;
-      if (timeoutId) window.clearTimeout(timeoutId);
-    };
-  }, [appendInputMetric, connected]);
-
   const openPermissions = useCallback(async () => {
     const result = await openAccessibilitySettings();
     setStatus(result === "opened" ? t(locale, "permissionsOpened") : t(locale, "permissionsOpened"));
@@ -665,57 +352,6 @@ export function App() {
     const result = await openActivityWatchWindow();
     setStatus(result === "opened" ? t(locale, "openedAw") : t(locale, "awFailed"));
   }, [locale]);
-
-  const prepareSessionMonitoring = useCallback(async (): Promise<boolean> => {
-    if (sessionStartingRef.current) return false;
-    sessionStartingRef.current = true;
-    setSessionStarting(true);
-    setErrorNotice(null);
-    setStatus(t(locale, "sessionPreparing"));
-    try {
-      const awReady = await refreshActivityWatch();
-      if (!awReady) return false;
-      monitoringReadyRef.current = true;
-      return true;
-    } finally {
-      sessionStartingRef.current = false;
-      setSessionStarting(false);
-    }
-  }, [locale, refreshActivityWatch]);
-
-  const startFocusSession = useCallback(async () => {
-    if (!await prepareSessionMonitoring()) return;
-    const now = Date.now();
-    const next = startFocusSessionClock(focusSessionRef.current!, now);
-    focusSessionRef.current = next;
-    persistFocusSessionClock(next);
-    setFocusSessionClock(next);
-    setFocusNudge(null);
-    nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
-    setStatus(t(locale, "sessionStarted"));
-  }, [locale, prepareSessionMonitoring]);
-
-  const resumeFocusSession = useCallback(async () => {
-    if (!await prepareSessionMonitoring()) return;
-    const now = Date.now();
-    const next = resumeFocusSessionClock(focusSessionRef.current!, now);
-    focusSessionRef.current = next;
-    persistFocusSessionClock(next);
-    setFocusSessionClock(next);
-    setStatus(t(locale, "sessionResumed"));
-  }, [locale, prepareSessionMonitoring]);
-
-  const endFocusSession = useCallback(() => {
-    const now = Date.now();
-    const next = endFocusSessionClock(focusSessionRef.current!, now);
-    focusSessionRef.current = next;
-    persistFocusSessionClock(next);
-    setFocusSessionClock(next);
-    writeSessionBoundary(false);
-    setFocusNudge(null);
-    nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
-    setStatus(t(locale, "sessionEnded"));
-  }, [locale, writeSessionBoundary]);
 
   const applySettingsBundle = useCallback(async (
     nextLocale: Locale,
@@ -784,21 +420,16 @@ export function App() {
     localSessionEventsRef.current = [];
     todayInputsRef.current = null;
     chartsRef.current.clear();
-    setTodayInputs(null);
     setDailySummary(null);
     setWeeklySummary(null);
-    setObservedApps([]);
-    setObservedWindows([]);
+    clearObservedActivity();
     setFocusNudge(null);
     nudgeTrackerRef.current = { distractedSince: null, lastNudgeAt: null };
-    const nextFocusSession = resetFocusSessionClock(Date.now());
-    focusSessionRef.current = nextFocusSession;
-    setFocusSessionClock(nextFocusSession);
-    persistFocusSessionClock(nextFocusSession);
+    resetSessionClock();
     setClearDataArmed(false);
     saveStoredState({ locale, settings, dailySummary: null, weeklySummary: null });
     setStatus(t(locale, "localDataCleared"));
-  }, [locale, settings]);
+  }, [clearObservedActivity, locale, resetSessionClock, settings]);
 
   const exportDailyReport = useCallback(async () => {
     if (!dailySummary) {
@@ -1398,44 +1029,6 @@ export function App() {
   );
 }
 
-async function loadWeeklySummaries(settings: FocusSettings): Promise<DailySummary[]> {
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (6 - index));
-    return formatLocalDate(date);
-  });
-
-  const windowBucketId = await aw.findWindowBucket();
-  const summaries = await Promise.all(
-    days.map(async (date) => {
-      const start = new Date(`${date}T00:00:00.000`);
-      const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-      const [windowEvents, inputEvents, sessionEvents] = await Promise.all([
-        windowBucketId ? aw.getEvents<WindowEventData>(windowBucketId, start, end) : Promise.resolve([]),
-        aw.getEvents<InputMetric>(`focus-input_local`, start, end).catch(() => []),
-        aw.getEvents<FocusSessionData>(`focus-companion-session_local`, start, end).catch(() => []),
-      ]);
-      return aggregateDailyFocus(date, windowEvents, inputEvents, settings, sessionEvents);
-    }),
-  );
-
-  return summaries;
-}
-
-async function waitForActivityWatch(retries = 12): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < retries; attempt += 1) {
-    try {
-      await aw.info();
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => window.setTimeout(resolve, 750));
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("ActivityWatch is not reachable.");
-}
-
 function parseRuleList(value: string): string[] {
   return value
     .split("\n")
@@ -1446,51 +1039,6 @@ function parseRuleList(value: string): string[] {
 function formatAppDuration(seconds: number, locale: Locale): string {
   const minutes = Math.max(1, Math.round(seconds / 60));
   return locale === "zh" ? `今日 ${minutes} 分钟` : `${minutes} min today`;
-}
-
-function mergeEvents<TData>(
-  ...groups: Array<ActivityWatchEvent<TData>[]>
-): ActivityWatchEvent<TData>[] {
-  const events = new Map<string, ActivityWatchEvent<TData>>();
-  for (const event of groups.flat()) {
-    const key = `${event.timestamp}:${JSON.stringify(event.data)}`;
-    events.set(key, event);
-  }
-  return Array.from(events.values()).sort(
-    (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
-  );
-}
-
-function keepTodayEvents<TData>(
-  events: ActivityWatchEvent<TData>[],
-  date: string,
-): ActivityWatchEvent<TData>[] {
-  return events.filter((event) => formatLocalDate(new Date(event.timestamp)) === date);
-}
-
-function mergeTodayIntoWeekly(
-  current: WeeklySummary | null,
-  today: DailySummary,
-): WeeklySummary {
-  if (current) {
-    const existingIndex = current.days.findIndex((day) => day.date === today.date);
-    const days = existingIndex >= 0
-      ? current.days.map((day) => (day.date === today.date ? today : day))
-      : [...current.days, today].sort((left, right) => left.date.localeCompare(right.date)).slice(-7);
-    return {
-      weekLabel: `${days[0]?.date ?? today.date} - ${days[days.length - 1]?.date ?? today.date}`,
-      days,
-    };
-  }
-
-  const target = new Date(`${today.date}T12:00:00`);
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(target);
-    date.setDate(target.getDate() - (6 - index));
-    const label = formatLocalDate(date);
-    return label === today.date ? today : summarizeTimeline(label, []);
-  });
-  return buildWeeklySummary(`${days[0].date} - ${days[6].date}`, days);
 }
 
 function formatShortDuration(seconds: number, locale: Locale): string {

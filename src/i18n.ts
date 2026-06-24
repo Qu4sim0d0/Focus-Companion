@@ -172,6 +172,7 @@ type TranslationKey =
   | "cancel"
   | "localDataCleared"
   | "ready"
+  | "readyCached"
   | "autoStartAw"
   | "awBrowserMode"
   | "connectingAw"
@@ -365,6 +366,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     cancel: "取消",
     localDataCleared: "本地聚合数据已清理；ActivityWatch 原始记录未受影响。",
     ready: "就绪。当前没有数据。",
+    readyCached: "就绪。已加载本地聚合缓存。",
     autoStartAw: "正在尝试自动启动 ActivityWatch...",
     awBrowserMode: "当前是浏览器开发模式，无法直接启动本机 ActivityWatch；桌面版会自动尝试打开。",
     connectingAw: "正在连接 ActivityWatch...",
@@ -557,6 +559,7 @@ const dictionaries: Record<Locale, Record<TranslationKey, string>> = {
     cancel: "Cancel",
     localDataCleared: "Local aggregate data cleared. Raw ActivityWatch records were not affected.",
     ready: "Ready. No data loaded.",
+    readyCached: "Ready. Local aggregate cache loaded.",
     autoStartAw: "Trying to start ActivityWatch automatically...",
     awBrowserMode: "Browser development mode cannot start the local ActivityWatch app; the desktop build will try automatically.",
     connectingAw: "Connecting to ActivityWatch...",

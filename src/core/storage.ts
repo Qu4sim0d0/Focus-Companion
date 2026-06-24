@@ -2,6 +2,7 @@ import { defaultSettings } from "./focus";
 import type {
   DailySummary,
   FocusSettings,
+  MinuteFocusReason,
   WeeklySummary,
 } from "../types";
 import type { Locale } from "../i18n";
@@ -125,6 +126,7 @@ function normalizeDailySummary(summary: DailySummary | null | undefined): DailyS
       attentionScore?: number | null;
       inputActive?: boolean;
       present?: boolean;
+      reason?: Partial<MinuteFocusReason>;
     }>;
   };
   const neutralMinutes = Number.isFinite(legacy.neutralMinutes) ? legacy.neutralMinutes! : 0;
@@ -149,6 +151,7 @@ function normalizeDailySummary(summary: DailySummary | null | undefined): DailyS
       inputActive: typeof record.inputActive === "boolean"
         ? record.inputActive
         : record.present ?? state !== "distracted",
+      reason: normalizeMinuteReason(record.reason),
     };
   }) as DailySummary["timeline"];
   return {
@@ -203,6 +206,33 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().slice(0, 1_000);
   return normalized || undefined;
+}
+
+function normalizeMinuteReason(reason: Partial<MinuteFocusReason> | undefined): MinuteFocusReason | undefined {
+  if (!reason || typeof reason.code !== "string" || typeof reason.label !== "string") return undefined;
+  const supportedCodes: MinuteFocusReason["code"][] = [
+    "input-idle",
+    "distracting-window",
+    "distracting-app",
+    "allowed-window",
+    "allowed-app",
+    "legacy-rule",
+    "self",
+    "unclassified-active",
+    "no-observation",
+  ];
+  if (!supportedCodes.includes(reason.code as MinuteFocusReason["code"])) return undefined;
+  return {
+    code: reason.code as MinuteFocusReason["code"],
+    label: reason.label.trim().slice(0, 200),
+    pattern: normalizeOptionalString(reason.pattern),
+    idleSeconds: normalizeOptionalNumber(reason.idleSeconds),
+    thresholdSeconds: normalizeOptionalNumber(reason.thresholdSeconds),
+  };
+}
+
+function normalizeOptionalNumber(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function clampNumber(value: number | undefined, min: number, max: number, fallback: number): number {

@@ -3,6 +3,7 @@ import type {
   DailySummary,
   FocusSettings,
   FocusState,
+  MinuteFocusReason,
   FocusSessionData,
   InputMetric,
   MinuteFocusRecord,
@@ -118,11 +119,52 @@ export function classifyMinute(
   inputMetric: InputMetric | undefined,
   settings: FocusSettings,
 ): FocusState {
-  if (!windowEvent && !inputMetric) return "distracted";
-  if (inputMetric && inputMetric.idleSeconds >= settings.inputIdleThresholdSeconds) {
-    return "distracted";
+  return explainMinuteFocus(windowEvent, inputMetric, settings).state;
+}
+
+export interface MinuteFocusExplanation {
+  state: FocusState;
+  reason: MinuteFocusReason;
+  windowExplanation: WindowScoreExplanation;
+}
+
+export function explainMinuteFocus(
+  windowEvent: ActivityWatchEvent<WindowEventData> | undefined,
+  inputMetric: InputMetric | undefined,
+  settings: FocusSettings,
+): MinuteFocusExplanation {
+  const windowExplanation = explainWindowScore(windowEvent, settings);
+  if (!windowEvent && !inputMetric) {
+    return {
+      state: "distracted",
+      reason: { code: "no-observation", label: "No window or input data was observed." },
+      windowExplanation,
+    };
   }
-  return scoreWindow(windowEvent, settings) === "distract" ? "distracted" : "focused";
+  if (inputMetric && inputMetric.idleSeconds >= settings.inputIdleThresholdSeconds) {
+    return {
+      state: "distracted",
+      reason: {
+        code: "input-idle",
+        label: `Input idle for ${Math.round(inputMetric.idleSeconds)}s.`,
+        idleSeconds: inputMetric.idleSeconds,
+        thresholdSeconds: settings.inputIdleThresholdSeconds,
+      },
+      windowExplanation,
+    };
+  }
+  if (windowExplanation.score === "distract") {
+    return {
+      state: "distracted",
+      reason: reasonFromWindowExplanation(windowExplanation),
+      windowExplanation,
+    };
+  }
+  return {
+    state: "focused",
+    reason: reasonFromWindowExplanation(windowExplanation),
+    windowExplanation,
+  };
 }
 
 export function activityScoreForState(state: FocusState): number {
@@ -147,20 +189,23 @@ export function aggregateDailyFocus(
     windowEvents,
     inputEvents,
   );
+  const windowIndex = buildMinuteEventIndex(windowEvents);
+  const inputIndex = buildMinuteEventIndex(inputEvents);
 
   for (const timestamp of observedMinutes) {
     const minuteStart = new Date(timestamp);
-    const windowEvent = findEventAt(windowEvents, minuteStart);
-    const inputEvent = findEventAt(inputEvents, minuteStart);
+    const windowEvent = windowIndex.get(timestamp);
+    const inputEvent = inputIndex.get(timestamp);
     const inputMetric = inputEvent?.data;
-    const state = classifyMinute(windowEvent, inputMetric, settings);
+    const explanation = explainMinuteFocus(windowEvent, inputMetric, settings);
 
     timeline.push({
       minuteStart: minuteStart.toISOString(),
       app: windowEvent?.data.app ?? "",
       title: windowEvent?.data.title ?? "",
-      state,
-      activityScore: activityScoreForState(state),
+      state: explanation.state,
+      reason: explanation.reason,
+      activityScore: activityScoreForState(explanation.state),
       inputActive: Boolean(
         inputMetric && inputMetric.idleSeconds < settings.inputIdleThresholdSeconds,
       ),
@@ -205,11 +250,12 @@ export function reclassifyDailySummary(
     const inputMetric: InputMetric | undefined = record.inputActive
       ? { idleSeconds: 0, active: true }
       : undefined;
-    const state = classifyMinute(windowEvent, inputMetric, settings);
+    const explanation = explainMinuteFocus(windowEvent, inputMetric, settings);
     return {
       ...record,
-      state,
-      activityScore: activityScoreForState(state),
+      state: explanation.state,
+      reason: explanation.reason,
+      activityScore: activityScoreForState(explanation.state),
     };
   });
   return summarizeTimeline(summary.date, timeline);
@@ -234,6 +280,7 @@ export function compressTimeline(
     compressed.push({
       ...slice[0],
       state: dominant,
+      reason: slice.find((record) => record.state === dominant)?.reason ?? slice[0].reason,
       activityScore: average(slice.map((record) => record.activityScore)),
       inputActive: slice.some((record) => record.inputActive),
     });
@@ -245,29 +292,82 @@ function matchingPattern(value: string, patterns: string[]): string | undefined 
   return patterns.find((pattern) => value.includes(pattern.toLowerCase()));
 }
 
-function findEventAt<TData>(
-  events: ActivityWatchEvent<TData>[],
-  minuteStart: Date,
-): ActivityWatchEvent<TData> | undefined {
-  const minuteStartMs = minuteStart.getTime();
-  const minuteEndMs = minuteStartMs + minuteMs;
-  let bestEvent: ActivityWatchEvent<TData> | undefined;
-  let bestOverlap = 0;
+interface IndexedEvent<TData> {
+  event: ActivityWatchEvent<TData>;
+  overlap: number;
+}
 
+function buildMinuteEventIndex<TData>(
+  events: ActivityWatchEvent<TData>[],
+): Map<number, ActivityWatchEvent<TData>> {
+  const indexed = new Map<number, IndexedEvent<TData>>();
   for (const event of events) {
     const eventStart = new Date(event.timestamp).getTime();
     const eventEnd = eventStart + Math.max(1, event.duration * 1000);
-    const overlap = Math.max(
-      0,
-      Math.min(minuteEndMs, eventEnd) - Math.max(minuteStartMs, eventStart),
-    );
-    if (overlap > bestOverlap) {
-      bestOverlap = overlap;
-      bestEvent = event;
+    const firstMinute = startOfMinute(new Date(eventStart)).getTime();
+    const lastMinute = startOfMinute(new Date(eventEnd - 1)).getTime();
+
+    for (let minuteStartMs = firstMinute; minuteStartMs <= lastMinute; minuteStartMs += minuteMs) {
+      const minuteEndMs = minuteStartMs + minuteMs;
+      const overlap = Math.max(
+        0,
+        Math.min(minuteEndMs, eventEnd) - Math.max(minuteStartMs, eventStart),
+      );
+      const current = indexed.get(minuteStartMs);
+      if (overlap > (current?.overlap ?? 0)) {
+        indexed.set(minuteStartMs, { event, overlap });
+      }
     }
   }
 
-  return bestEvent;
+  return new Map(Array.from(indexed, ([minuteStart, { event }]) => [minuteStart, event]));
+}
+
+function reasonFromWindowExplanation(
+  explanation: WindowScoreExplanation,
+): MinuteFocusReason {
+  if (explanation.source === "distracting-window") {
+    return {
+      code: "distracting-window",
+      label: "Window title matched a distracting rule.",
+      pattern: explanation.pattern,
+    };
+  }
+  if (explanation.source === "distracting-app") {
+    return {
+      code: "distracting-app",
+      label: "App matched a distracting rule.",
+      pattern: explanation.pattern,
+    };
+  }
+  if (explanation.source === "allowed-window") {
+    return {
+      code: "allowed-window",
+      label: "Window title matched an allowed rule.",
+      pattern: explanation.pattern,
+    };
+  }
+  if (explanation.source === "allowed-app") {
+    return {
+      code: "allowed-app",
+      label: "App matched an allowed rule.",
+      pattern: explanation.pattern,
+    };
+  }
+  if (explanation.source === "legacy") {
+    return {
+      code: "legacy-rule",
+      label: "Legacy app/window rule matched.",
+      pattern: explanation.pattern,
+    };
+  }
+  if (explanation.source === "self") {
+    return { code: "self", label: "Focus Companion is treated as focused." };
+  }
+  return {
+    code: "unclassified-active",
+    label: "Input was active and no distracting rule matched.",
+  };
 }
 
 function observedMinuteStarts(

@@ -5,6 +5,7 @@ import {
   classifyMinute,
   defaultSettings,
   explainWindowScore,
+  explainMinuteFocus,
   reclassifyDailySummary,
   scoreWindow,
   summarizeTimeline,
@@ -48,6 +49,20 @@ describe("focus aggregation", () => {
       { idleSeconds: 2, active: true },
       defaultSettings,
     )).toBe("distracted");
+  });
+
+  it("explains minute classification reasons", () => {
+    expect(explainMinuteFocus(
+      windowEvent("Code", "focus.ts"),
+      { idleSeconds: 90, active: false },
+      defaultSettings,
+    )).toEqual(expect.objectContaining({
+      state: "distracted",
+      reason: expect.objectContaining({
+        code: "input-idle",
+        thresholdSeconds: defaultSettings.inputIdleThresholdSeconds,
+      }),
+    }));
   });
 
   it("merges missing observations into distracted time", () => {
@@ -178,6 +193,38 @@ describe("focus aggregation", () => {
     expect(summary.timeline[0]).toEqual(expect.objectContaining({
       activityScore: 1,
       inputActive: true,
+      reason: expect.objectContaining({ code: "allowed-app" }),
+    }));
+  });
+
+  it("uses the event with the largest minute overlap from the minute index", () => {
+    const date = "2026-06-14";
+    const summary = aggregateDailyFocus(
+      date,
+      [
+        {
+          timestamp: `${date}T09:00:00.000`,
+          duration: 20,
+          data: { app: "Code", title: "focus.ts" },
+        },
+        {
+          timestamp: `${date}T09:00:20.000`,
+          duration: 40,
+          data: { app: "Safari", title: "YouTube - 推荐视频" },
+        },
+      ],
+      [inputEvent(`${date}T09:00:00.000`, 1, 60)],
+      defaultSettings,
+    );
+
+    expect(summary.totalMinutes).toBe(1);
+    expect(summary.timeline[0]).toEqual(expect.objectContaining({
+      app: "Safari",
+      state: "distracted",
+      reason: expect.objectContaining({
+        code: "distracting-window",
+        pattern: "YouTube",
+      }),
     }));
   });
 

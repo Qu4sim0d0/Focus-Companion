@@ -58,6 +58,24 @@ export interface MinuteFocusRecord {
   state: FocusState;
   activityScore: number;
   inputActive: boolean;
+  reason?: MinuteFocusReason;
+}
+
+export interface MinuteFocusReason {
+  code:
+    | "input-idle"
+    | "distracting-window"
+    | "distracting-app"
+    | "allowed-window"
+    | "allowed-app"
+    | "legacy-rule"
+    | "self"
+    | "unclassified-active"
+    | "no-observation";
+  label: string;
+  pattern?: string;
+  idleSeconds?: number;
+  thresholdSeconds?: number;
 }
 
 export interface DailySummary {

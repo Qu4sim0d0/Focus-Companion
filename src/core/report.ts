@@ -21,10 +21,15 @@ export function buildDailyMarkdown(summary: DailySummary, chartAssets: ChartAsse
     lines.push(`![${asset.filename}](assets/${asset.filename})`, "");
   }
 
-  lines.push("## Timeline", "", "| Time | State | App | Title | Activity |", "| --- | --- | --- | --- | --- |");
+  lines.push(
+    "## Timeline",
+    "",
+    "| Time | State | App | Title | Activity | Reason |",
+    "| --- | --- | --- | --- | ---: | --- |",
+  );
   for (const record of compressTimeline(summary.timeline)) {
     lines.push(
-      `| ${new Date(record.minuteStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} | ${record.state} | ${escapeCell(record.app)} | ${escapeCell(record.title)} | ${record.activityScore.toFixed(2)} |`,
+      `| ${new Date(record.minuteStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} | ${record.state} | ${escapeCell(record.app)} | ${escapeCell(record.title)} | ${record.activityScore.toFixed(2)} | ${escapeCell(formatReason(record.reason))} |`,
     );
   }
 
@@ -90,4 +95,9 @@ function metricLine(label: string, minutes: number): string {
 
 function escapeCell(value: string): string {
   return value.replaceAll("|", "\\|").replaceAll("\n", " ");
+}
+
+function formatReason(reason: DailySummary["timeline"][number]["reason"]): string {
+  if (!reason) return "";
+  return reason.pattern ? `${reason.label} (${reason.pattern})` : reason.label;
 }

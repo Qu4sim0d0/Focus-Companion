@@ -13,6 +13,11 @@ describe("report generation", () => {
         state: "focused",
         activityScore: 1,
         inputActive: true,
+        reason: {
+          code: "allowed-app",
+          label: "App matched an allowed rule.",
+          pattern: "Code",
+        },
       },
     ];
     const markdown = buildDailyMarkdown(summarizeTimeline("2026-06-14", timeline), [
@@ -26,6 +31,6 @@ describe("report generation", () => {
       minute: "2-digit",
       hour12: false,
     });
-    expect(markdown).toContain(`| ${localTime} | focused | Code | App.tsx | 1.00 |`);
+    expect(markdown).toContain(`| ${localTime} | focused | Code | App.tsx | 1.00 | App matched an allowed rule. (Code) |`);
   });
 });

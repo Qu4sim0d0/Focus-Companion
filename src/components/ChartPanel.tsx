@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { EChartsType } from "echarts/core";
 import type { EChartsOption } from "echarts";
 import { dailyTimelineOption } from "./charts";
@@ -16,7 +16,6 @@ interface ChartPanelProps {
   title: string;
   filename: string;
   option?: EChartsOption;
-  optionFactory?: () => EChartsOption;
   onReady?: (handle: ChartPanelHandle) => void;
   loadingLabel?: string;
 }
@@ -25,18 +24,15 @@ export const ChartPanel = memo(function ChartPanel({
   title,
   filename,
   option,
-  optionFactory,
   onReady,
   loadingLabel = "Loading...",
 }: ChartPanelProps) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<EChartsType | null>(null);
   const optionRef = useRef(option);
-  const optionFactoryRef = useRef(optionFactory);
   const [loading, setLoading] = useState(true);
 
   optionRef.current = option;
-  optionFactoryRef.current = optionFactory;
 
   useEffect(() => {
     if (!elementRef.current) return;
@@ -53,7 +49,7 @@ export const ChartPanel = memo(function ChartPanel({
       if (cancelled || !elementRef.current) return;
       chart = echarts.init(elementRef.current, undefined, { renderer: "canvas" });
       chartRef.current = chart;
-      const initialOption = optionFactoryRef.current?.() ?? optionRef.current;
+      const initialOption = optionRef.current;
       if (initialOption) {
         chart.setOption(initialOption, { notMerge: true, lazyUpdate: true });
       }
@@ -81,23 +77,9 @@ export const ChartPanel = memo(function ChartPanel({
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    if (optionFactory || !option) return;
+    if (!option) return;
     chart.setOption(option, { notMerge: true, lazyUpdate: true });
-  }, [option, optionFactory]);
-
-  useEffect(() => {
-    if (!optionFactory) return;
-    const updateChart = () => {
-      const chart = chartRef.current;
-      if (!chart) return;
-      const nextOption = optionFactoryRef.current?.();
-      if (nextOption) {
-        chart.setOption(nextOption, { notMerge: true, lazyUpdate: true });
-      }
-    };
-    const intervalId = window.setInterval(updateChart, 60_000);
-    return () => window.clearInterval(intervalId);
-  }, [optionFactory]);
+  }, [option]);
 
   return (
     <section className="panel chart-panel">
@@ -129,24 +111,45 @@ interface TimelineChartPanelProps {
 export const TimelineChartPanel = memo(function TimelineChartPanel(
   props: TimelineChartPanelProps,
 ) {
-  const sourceRef = useRef(props);
-  sourceRef.current = props;
-  const optionFactory = useCallback(() => {
-    const source = sourceRef.current;
-    return dailyTimelineOption(
-      source.summary,
-      source.locale,
-      new Date(),
-    );
-  }, []);
+  const option = useMemo(
+    () =>
+      dailyTimelineOption(
+        props.summary,
+        props.locale,
+        new Date(),
+      ),
+    [props.locale, props.summary],
+  );
 
   return (
     <ChartPanel
       title={props.title}
       filename={props.filename}
-      optionFactory={optionFactory}
+      option={option}
       onReady={props.onReady}
       loadingLabel={props.loadingLabel}
     />
+  );
+}, (previous, next) => {
+  if (
+    previous.title !== next.title ||
+    previous.filename !== next.filename ||
+    previous.locale !== next.locale ||
+    previous.onReady !== next.onReady ||
+    previous.loadingLabel !== next.loadingLabel
+  ) {
+    return false;
+  }
+  const previousLast = previous.summary.timeline.at(-1);
+  const nextLast = next.summary.timeline.at(-1);
+  return (
+    previous.summary.date === next.summary.date &&
+    previous.summary.totalMinutes === next.summary.totalMinutes &&
+    previous.summary.focusedMinutes === next.summary.focusedMinutes &&
+    previous.summary.distractedMinutes === next.summary.distractedMinutes &&
+    previousLast?.minuteStart === nextLast?.minuteStart &&
+    previousLast?.state === nextLast?.state &&
+    previousLast?.app === nextLast?.app &&
+    previousLast?.title === nextLast?.title
   );
 });

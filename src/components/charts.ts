@@ -22,7 +22,7 @@ const timelineWindowMs = 3 * 60 * 60 * 1000;
 const chartLabels: Record<
   Locale,
   Record<
-    FocusState | "minutes" | "state" | "app" | "title" | "activity" | "noData",
+    FocusState | "minutes" | "state" | "app" | "title" | "activity" | "reason" | "noData",
     string
   >
 > = {
@@ -34,6 +34,7 @@ const chartLabels: Record<
     app: "应用",
     title: "窗口",
     activity: "输入状态",
+    reason: "原因",
     noData: "暂无有效记录",
   },
   en: {
@@ -44,7 +45,33 @@ const chartLabels: Record<
     app: "App",
     title: "Title",
     activity: "Input state",
+    reason: "Reason",
     noData: "No valid records yet",
+  },
+};
+
+const reasonLabels: Record<Locale, Record<string, string>> = {
+  zh: {
+    "input-idle": "输入空闲超过阈值",
+    "distracting-window": "窗口标题命中分心规则",
+    "distracting-app": "软件命中分心规则",
+    "allowed-window": "窗口标题命中允许规则",
+    "allowed-app": "软件命中允许规则",
+    "legacy-rule": "旧版规则命中",
+    self: "Focus Companion 视为专注",
+    "unclassified-active": "有输入且未命中分心规则",
+    "no-observation": "没有窗口或输入观测",
+  },
+  en: {
+    "input-idle": "Input idle threshold exceeded",
+    "distracting-window": "Window title matched a distracting rule",
+    "distracting-app": "App matched a distracting rule",
+    "allowed-window": "Window title matched an allowed rule",
+    "allowed-app": "App matched an allowed rule",
+    "legacy-rule": "Legacy rule matched",
+    self: "Focus Companion is treated as focused",
+    "unclassified-active": "Input active and no distracting rule matched",
+    "no-observation": "No window or input observation",
   },
 };
 
@@ -81,6 +108,7 @@ export function dailyTimelineOption(
           `${text.state}: ${text[record.state]}`,
           record.app ? `${text.app}: ${record.app}` : undefined,
           record.title ? `${text.title}: ${record.title}` : undefined,
+          record.reason ? `${text.reason}: ${formatReason(record.reason, locale)}` : undefined,
         ].filter(Boolean).join("<br/>");
       },
     },
@@ -220,4 +248,12 @@ function formatLocalTime(timestamp: number): string {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function formatReason(
+  reason: NonNullable<DailySummary["timeline"][number]["reason"]>,
+  locale: Locale,
+): string {
+  const label = reasonLabels[locale][reason.code] ?? reason.label;
+  return reason.pattern ? `${label}: ${reason.pattern}` : label;
 }
